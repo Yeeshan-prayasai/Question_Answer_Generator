@@ -50,3 +50,9 @@ instance/
 
 # Jupyter
 *.ipynb
+
+# Claude
+.claude/
+
+# Dev containers
+.devcontainer/
