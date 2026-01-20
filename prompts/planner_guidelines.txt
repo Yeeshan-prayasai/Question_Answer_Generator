@@ -1,0 +1,86 @@
+## 1. STATIC/DYNAMIC CONTENT
+
+* **Static vs. Dynamic:** In a paper designed for 100 questions, approximately **70%** of the content must be based on **static, core conceptual knowledge**, and **30%** must draw from **current developments (dynamic)**.
+* **Current Affairs Integration:** Questions must derive from current news or reports but must test the **underlying static, conceptual knowledge**. Avoid date-sensitive facts. Use expressions like "**recently**," "**in the context of**," or "**as of [Year]**" to maintain relevance.
+
+---
+## Question PATTERN FORMATS
+
+### Type 1
+Name: Standard Single-Correct
+Description: The question MUST have options where **ONLY ONE** choice is correct.
+        
+### Type 2
+Name: Standard Single-Incorrect
+Description: The question MUST have options where **ONLY ONE** choice is Incorrect.
+
+### Type 3
+Name: Multiple-Statement-2 (Correct)
+Description: The question MUST have exactly 2 small statements. Options test which statement(s) are correct.
+
+### Type 4
+Name: Multiple-Statement-3 (Correct)
+Description: The question MUST have exactly 3 small statements. Options test which statement(s) are correct.
+
+### Type 5
+Name: Multiple-Statement-4 (Correct)
+Description: The question MUST have exactly 4 small statements numbered 1, 2, 3, 4. All 4 statements MUST be present. Options test which statement(s) are correct.
+
+### Type 6
+Name: Multiple-Statement-2 (Incorrect)
+Description: The question MUST have exactly 2 small statements. Options test which statement(s) are NOT correct.
+
+### Type 7
+Name: Multiple-Statement-3 (Incorrect)
+Description: The question MUST have exactly 3 small statements. Options test which statement(s) are NOT correct.
+
+### Type 8
+Name: Multiple-Statement-4 (Incorrect)
+Description: The question MUST have exactly 4 small statements numbered 1, 2, 3, 4. All 4 statements MUST be present. Options test which statement(s) are NOT correct.
+
+### Type 9
+Name: How Many - Statement
+Description: The question MUST have multiple small statements, options will test about knowledge of each statement to finalize answer. Here Elimination is not possible.
+
+### Type 10
+Name: How Many Pairs Correct/Incorrect
+Description: The question MUST have multiple pairs, options will test associative knowledge of candidate.
+
+### Type 11
+Name: How Many Sets/Triplets
+Description: The question MUST have multiple triplets, options will test associative knowledge of candidate.
+
+### Type 12
+Name: Std 2-Stmt Assertion-Reason
+Description: The question MUST have two statements (Statement-I and Statement-II), options will test reasoning knowledge of candidate.
+
+### Type 13
+Name: Complex 3-Stmt Assertion-Reason
+Description: The question MUST have THREE statements (Statement-I, Statement-II, Statement-III). All 3 statements MUST be present.
+
+### Type 14
+Name: Chronological Ordering
+Description: The question MUST have multiple terms, options will test chronological order knowledge of candidate.
+
+### Type 15
+Name: Geographical Sequencing
+Description: The question MUST have multiple Terms, options will test geographical Sequencing knowledge of candidate.
+
+---
+
+##  Cognitive-Level Types
+
+Name: Recall/Recognition
+Description: Tests pure factual, definitional, or date-based memory. Questions check if the candidate can recognize specific, isolated pieces of information.
+
+Name: Comprehension/Conceptual
+Description: Tests the understanding of mechanisms, core concepts, or fundamental meanings. Questions require linking cause and effect or interpreting a defined principle.
+
+Name: Application/Analysis
+Description: Tests the ability to apply theoretical knowledge to a scenario or analyze multiple statements for correctness. These often use 'Consider the following statements' format requiring elimination based on analytical reasoning.
+
+Name: Higher Reasoning/Synthesis
+Description: Tests multi-domain, multi-step reasoning, or synthesis of complex data/concepts across different subjects (e.g., economics and environment). These demand high-level judgment and integration.
+
+---
+
