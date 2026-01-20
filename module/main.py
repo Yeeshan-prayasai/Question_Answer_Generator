@@ -249,15 +249,15 @@ def update_selection(list_key, index, action, key_prefix):
         else:
             q.is_rejected = False
 
-def regenerate_callback(q, key_prefix):
-    """Callback for regeneration"""
+def regenerate_callback(q, key_prefix, custom_blueprint=None):
+    """Callback for regeneration with optional custom configuration"""
     try:
-        blueprint = q.question_blueprint
+        blueprint = custom_blueprint if custom_blueprint else q.question_blueprint
         manager = st.session_state.manager
-        
+
         # Execute regeneration
         new_q = asyncio.run(manager.regenerate_question(blueprint))
-        
+
         if new_q:
              # Update Object
              q.question_english = new_q.question_english
@@ -265,12 +265,16 @@ def regenerate_callback(q, key_prefix):
              q.answer = new_q.answer
              q.question_hindi = new_q.question_hindi
              q.options_hindi = new_q.options_hindi
-             
+
+             # Update blueprint if custom
+             if custom_blueprint:
+                 q.question_blueprint = custom_blueprint
+
              # Reset Status and Feedback
              q.is_selected = False
              q.is_rejected = False
              q.user_feedback = ""
-             
+
              unique_id = q.db_uuid or q.id
 
              # Update Session State Keys for Content
@@ -281,7 +285,7 @@ def regenerate_callback(q, key_prefix):
                      st.session_state[f"{key_prefix}_opt_eng_{unique_id}_{i}"] = opt
              if f"{key_prefix}_ans_{unique_id}" in st.session_state:
                  st.session_state[f"{key_prefix}_ans_{unique_id}"] = new_q.answer
-                 
+
              # Update Session State Keys for Status/Feedback
              if f"{key_prefix}_sel_{unique_id}" in st.session_state:
                  st.session_state[f"{key_prefix}_sel_{unique_id}"] = False
@@ -514,7 +518,7 @@ def get_config_table(key_suffix):
         column_config=column_config,
         num_rows="dynamic",
         key=f"editor_{key_suffix}",
-        use_container_width=True,
+        width='stretch',
         hide_index=True
     )
 
@@ -640,7 +644,7 @@ def get_config_table(key_suffix):
                     "Difficulty": item.get('difficulty', '🎲'),
                     "Count": item['count']
                 })
-            st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(preview_data), width='stretch', hide_index=True)
 
     return config_list
 
@@ -766,8 +770,75 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
         
         with ac3:
             st.caption("Action")
-            st.button("⚡ Regenerate", key=f"{key_prefix}_regen_{q.db_uuid or q.id}",
-                      on_click=regenerate_callback, args=(q, key_prefix))
+            col_regen, col_config = st.columns([1, 1])
+
+            with col_regen:
+                st.button("⚡ Regenerate", key=f"{key_prefix}_regen_{q.db_uuid or q.id}",
+                          on_click=regenerate_callback, args=(q, key_prefix, None))
+
+            with col_config:
+                with st.popover("⚙️ Config", use_container_width=False):
+                    st.caption("**Regenerate with Custom Settings**")
+
+                    # Parse current blueprint
+                    current_meta = parse_blueprint(q.question_blueprint)
+
+                    # Configuration options
+                    patterns = ["Standard", "Statement Based", "Assertion-Reason", "List Based", "Matching", "Chronological"]
+                    difficulties = ["Easy", "Moderate", "Hard"]
+                    cognitive_levels = ["Recall/Recognition", "Understanding", "Application", "Analysis"]
+
+                    new_pattern = st.selectbox("Pattern", patterns,
+                                              index=patterns.index(current_meta["pattern"]) if current_meta["pattern"] in patterns else 0,
+                                              key=f"{key_prefix}_cfg_pat_{q.db_uuid or q.id}")
+                    new_diff = st.selectbox("Difficulty", difficulties,
+                                           index=difficulties.index(current_meta["difficulty"]) if current_meta["difficulty"] in difficulties else 1,
+                                           key=f"{key_prefix}_cfg_diff_{q.db_uuid or q.id}")
+                    new_cog = st.selectbox("Cognitive Level", cognitive_levels,
+                                          index=cognitive_levels.index(current_meta["cognitive"]) if current_meta["cognitive"] in cognitive_levels else 0,
+                                          key=f"{key_prefix}_cfg_cog_{q.db_uuid or q.id}")
+
+                    if st.button("Apply & Regenerate", key=f"{key_prefix}_apply_regen_{q.db_uuid or q.id}"):
+                        # Create modified blueprint
+                        blueprint_lines = q.question_blueprint.split('\n') if q.question_blueprint else []
+                        new_blueprint_lines = []
+
+                        for line in blueprint_lines:
+                            if line.strip().startswith("Format:") or line.strip().startswith("Question Type:"):
+                                new_blueprint_lines.append(f"Format: {new_pattern}")
+                            elif line.strip().startswith("Difficulty:"):
+                                new_blueprint_lines.append(f"Difficulty: {new_diff}")
+                            elif line.strip().startswith("Cognitive"):
+                                new_blueprint_lines.append(f"Cognitive Skill: {new_cog}")
+                            else:
+                                new_blueprint_lines.append(line)
+
+                        custom_blueprint = '\n'.join(new_blueprint_lines)
+                        regenerate_callback(q, key_prefix, custom_blueprint)
+                        st.rerun()
+
+def parse_blueprint(blueprint_text):
+    """Extract metadata from blueprint text"""
+    if not blueprint_text:
+        return {"topic": "N/A", "subtopic": "N/A", "pattern": "N/A", "cognitive": "N/A", "difficulty": "N/A"}
+
+    metadata = {"topic": "N/A", "subtopic": "N/A", "pattern": "N/A", "cognitive": "N/A", "difficulty": "N/A"}
+    lines = blueprint_text.split('\n')
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith("Topic:"):
+            metadata["topic"] = line.replace("Topic:", "").strip()
+        elif line.startswith("Subtopic:"):
+            metadata["subtopic"] = line.replace("Subtopic:", "").strip()
+        elif line.startswith("Format:") or line.startswith("Question Type:"):
+            metadata["pattern"] = line.split(":", 1)[1].strip() if ":" in line else "N/A"
+        elif line.startswith("Cognitive"):
+            metadata["cognitive"] = line.split(":", 1)[1].strip() if ":" in line else "N/A"
+        elif line.startswith("Difficulty:"):
+            metadata["difficulty"] = line.replace("Difficulty:", "").strip()
+
+    return metadata
 
 def render_review_interface(questions, test_code, list_key='loaded_questions', unsaved=False):
     """
@@ -781,13 +852,67 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
     selected = sum(1 for q in questions if q.is_selected)
     rejected = sum(1 for q in questions if q.is_rejected)
     pending = total - selected - rejected
-    
+
     st.metric("Total Questions", total)
     c1, c2, c3 = st.columns(3)
     c1.metric("Selected", selected)
     c2.metric("Rejected", rejected)
     c3.metric("Pending", pending)
-    
+
+    st.divider()
+
+    # Question Metadata Dashboard
+    with st.expander("📊 Question Distribution Dashboard", expanded=False):
+        st.subheader("Generated Question Metadata")
+
+        # Parse blueprints and create dashboard data
+        dashboard_data = []
+        for q in questions:
+            metadata = parse_blueprint(q.question_blueprint)
+            dashboard_data.append({
+                "Q#": q.question_number,
+                "Subject": q.subject or "N/A",
+                "Topic": metadata["topic"],
+                "Subtopic": metadata["subtopic"],
+                "Pattern": metadata["pattern"],
+                "Cognitive": metadata["cognitive"],
+                "Difficulty": metadata["difficulty"],
+                "Status": "✅ Selected" if q.is_selected else ("❌ Rejected" if q.is_rejected else "⏳ Pending")
+            })
+
+        if dashboard_data:
+            df = pd.DataFrame(dashboard_data)
+            # Calculate appropriate height based on number of rows (header + data rows)
+            row_height = 35  # approximate height per row in pixels
+            header_height = 38
+            min_height = 200
+            max_height = 600
+            calculated_height = min(max(header_height + (len(df) * row_height), min_height), max_height)
+
+            st.dataframe(df, width='stretch', hide_index=True, height=calculated_height)
+
+            # Summary statistics
+            st.subheader("Distribution Summary")
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.write("**By Difficulty:**")
+                diff_counts = df['Difficulty'].value_counts()
+                for diff, count in diff_counts.items():
+                    st.write(f"• {diff}: {count}")
+
+            with col2:
+                st.write("**By Cognitive Level:**")
+                cog_counts = df['Cognitive'].value_counts()
+                for cog, count in cog_counts.items():
+                    st.write(f"• {cog}: {count}")
+
+            with col3:
+                st.write("**By Pattern:**")
+                pattern_counts = df['Pattern'].value_counts()
+                for pattern, count in pattern_counts.items():
+                    st.write(f"• {pattern}: {count}")
+
     st.divider()
 
     # Generate Unique Key Prefix for Widgets based on test_code
@@ -874,7 +999,12 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
 
 # --- Main App ---
 
-st.markdown('<div class="main-header">🇮🇳 PrayasAI UPSC QA Generator</div>', unsafe_allow_html=True)
+# Header with logo - detect theme and use appropriate version
+theme = st.get_option("theme.base")
+if theme == "dark":
+    st.image("logo-dark.svg", width=300)
+else:
+    st.image("logo.svg", width=300)
 
 # Sidebar Mode
 mode = st.sidebar.radio("Mode", ["Prelims Test Series", "Random Generation"])

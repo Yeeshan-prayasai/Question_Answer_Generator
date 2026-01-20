@@ -71,7 +71,8 @@ class ArchivistAgent:
             return [row[0] for row in rows]
         except Exception as e:
             print(f"Error fetching test codes: {e}")
-            conn.rollback()
+            if conn and not conn.closed:
+                conn.rollback()
             return []
             
     def check_test_code_exists(self, test_code: str) -> bool:
@@ -82,7 +83,8 @@ class ArchivistAgent:
             return cur.fetchone() is not None
         except Exception as e:
             print(f"Error checking test code: {e}")
-            conn.rollback()
+            if conn and not conn.closed:
+                conn.rollback()
             return False
 
     def save_questions(self, questions: List[Question], test_code: str):
@@ -131,7 +133,8 @@ class ArchivistAgent:
             return True
         except Exception as e:
             print(f"Error saving questions: {e}")
-            conn.rollback()
+            if conn and not conn.closed:
+                conn.rollback()
             return False
 
     def get_questions_by_test_code(self, test_code: str) -> List[dict]:
@@ -152,7 +155,8 @@ class ArchivistAgent:
             return questions_data
         except Exception as e:
             print(f"Error fetching questions: {e}")
-            conn.rollback()
+            if conn and not conn.closed:
+                conn.rollback()
             return []
 
     def get_max_question_number(self, test_code: str) -> int:
@@ -184,5 +188,6 @@ class ArchivistAgent:
             return questions_data
         except Exception as e:
             print(f"Error fetching all questions: {e}")
-            conn.rollback()
+            if conn and not conn.closed:
+                conn.rollback()
             return []
