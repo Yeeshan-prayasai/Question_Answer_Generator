@@ -644,7 +644,6 @@ def get_config_table(key_suffix):
                     "#": i + 1,
                     "Topic": item.get('topic', '') or '🎲',
                     "Pattern": item.get('pattern', '🎲'),
-                    "Cognitive": item.get('cognitive', '🎲'),
                     "Difficulty": item.get('difficulty', '🎲')
                 })
             st.dataframe(pd.DataFrame(preview_data), width="stretch", hide_index=True)

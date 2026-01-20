@@ -1,0 +1,9 @@
+dotenv==0.9.9
+pypdf==6.2.0
+google-genai==1.50.1
+streamlit==1.51.0
+psycopg2-binary==2.9.10
+openpyxl
+pandas
+python-docx
+numpy

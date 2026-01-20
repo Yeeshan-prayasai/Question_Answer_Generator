@@ -1,6 +1,7 @@
 # Virtual environment
 .venv/
 venv/
+venv*
 env/
 
 # Python
@@ -8,6 +9,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyc
 
 # Environment variables
 .env
@@ -23,3 +25,28 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Testing/Coverage
+coverage/
+htmlcov/
+.coverage
+.pytest_cache/
+.tox/
+.mypy_cache/
+
+# Build
+dist/
+build/
+*.egg-info/
+pip-wheel-metadata/
+
+# Database
+*.sqlite3
+*.db
+instance/
+
+# Jupyter
+*.ipynb

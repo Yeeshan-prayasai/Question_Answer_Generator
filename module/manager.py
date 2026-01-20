@@ -25,9 +25,9 @@ class QuestionManager:
     def __init__(self, api_key: str):
         if not api_key:
             raise ValueError("API Key is required")
-        
+
         os.environ['GEMINI_API_KEY'] = api_key
-        
+
         try:
             self.client = genai.Client()
             # We delay async client creation to execution time to avoid loop binding issues
@@ -37,12 +37,12 @@ class QuestionManager:
 
         self.planner = PlannerAgent(self.client)
         # Agents initialized with placeholders or sync client if compatible
-        # But Generator and Translator use async client. 
+        # But Generator and Translator use async client.
         # We will update their client reference at runtime.
-        self.generator = GeneratorAgent(None) 
+        self.generator = GeneratorAgent(None)
         self.translator = TranslatorAgent(None)
         self.archivist = ArchivistAgent()
-        
+
         self.global_token_usage = []
 
     async def _per_question_execution(self, plan_tuple):
@@ -108,17 +108,17 @@ class QuestionManager:
         
         return response
 
-    async def generate_questions(self, 
-                               source_text: Optional[str], 
-                               uploaded_pdf: Any, 
-                               topic_input: Optional[str], 
+    async def generate_questions(self,
+                               source_text: Optional[str],
+                               uploaded_pdf: Any,
+                               topic_input: Optional[str],
                                question_distribution: List[dict],
                                start_question_number: int = 1):
-        
+
         start = time.perf_counter()
         num_questions = sum(item['count'] for item in question_distribution)
         print('Request coming for number of question: ', num_questions)
-        
+
         # Initialize Async Client for this run
         try:
             # Create a fresh async client that will use the current running loop
@@ -200,11 +200,11 @@ class QuestionManager:
         )
         
         token_usage = calculate_total_usage(self.global_token_usage)
-        
+
         end = time.perf_counter()
         elapsed = end - start
         print(f"Overall Time: {elapsed:.1f} seconds.")
-        
+
         return questions_result, token_usage
 
     async def regenerate_question(self, blueprint: str) -> Optional[Question]:
@@ -213,7 +213,7 @@ class QuestionManager:
             async_client = genai.Client().aio
             self.generator.client = async_client
             self.translator.client = async_client
-            
+
             que = await self.generator.generate_question(blueprint, self.global_token_usage)
             if que:
                 que_hindi = await self.translator.translate_question(que.question, que.options, self.global_token_usage)

@@ -74,7 +74,7 @@ class ArchivistAgent:
             if conn and not conn.closed:
                 conn.rollback()
             return []
-            
+
     def check_test_code_exists(self, test_code: str) -> bool:
         conn = self._get_connection()
         if not conn: return False
@@ -95,21 +95,21 @@ class ArchivistAgent:
                 # Convert options list to dict
                 opts_eng = {chr(97+i): opt for i, opt in enumerate(q.options_english)}
                 opts_hin = {chr(97+i): opt for i, opt in enumerate(q.options_hindi)}
-                
+
                 ans = q.answer.upper() # Ensure upper
-                
+
                 # Check if we have a UUID already, if not generate one
                 if not q.db_uuid:
                      q.db_uuid = str(uuid.uuid4())
-                
+
                 q_uuid = q.db_uuid
 
                 # Use UPSERT (INSERT ON CONFLICT) logic
                 cur.execute("""
                     INSERT INTO upsc_prelims_ai_generated_que (
-                        id, test_code, question_number, subject, question_blueprint, 
-                        question_hindi, options_hindi, 
-                        question_english, options_english, 
+                        id, test_code, question_number, subject, question_blueprint,
+                        question_hindi, options_hindi,
+                        question_english, options_english,
                         answer, quality_pass_flag, quality_feedback
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
@@ -143,12 +143,12 @@ class ArchivistAgent:
         try:
             # Fetch ALL questions (selected and rejected) order by question_number
             cur.execute("""
-                SELECT * FROM upsc_prelims_ai_generated_que 
-                WHERE test_code = %s 
+                SELECT * FROM upsc_prelims_ai_generated_que
+                WHERE test_code = %s
                 ORDER BY question_number ASC
             """, (test_code,))
             rows = cur.fetchall()
-            
+
             questions_data = []
             for row in rows:
                 questions_data.append(dict(row))
@@ -178,10 +178,10 @@ class ArchivistAgent:
         conn = self._get_connection()
         if not conn: return []
         try:
-            cur.execute("""SELECT question_blueprint FROM upsc_prelims_ai_generated_que 
+            cur.execute("""SELECT question_blueprint FROM upsc_prelims_ai_generated_que
                 WHERE quality_pass_flag = TRUE""")
             rows = cur.fetchall()
-            
+
             questions_data = []
             for row in rows:
                 questions_data.append(dict(row))
