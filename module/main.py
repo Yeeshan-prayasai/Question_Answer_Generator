@@ -6,8 +6,12 @@ import pandas as pd
 import uuid
 import json
 import time
+import warnings
 from io import BytesIO
 from dotenv import load_dotenv
+
+# Suppress async cleanup warnings in Python 3.13+
+warnings.filterwarnings('ignore', message='Event loop is closed')
 
 # Ensure the project root is in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -518,7 +522,7 @@ def get_config_table(key_suffix):
         column_config=column_config,
         num_rows="dynamic",
         key=f"editor_{key_suffix}",
-        width='stretch',
+        width="stretch",
         hide_index=True
     )
 
@@ -641,10 +645,9 @@ def get_config_table(key_suffix):
                     "Topic": item.get('topic', '') or '🎲',
                     "Pattern": item.get('pattern', '🎲'),
                     "Cognitive": item.get('cognitive', '🎲'),
-                    "Difficulty": item.get('difficulty', '🎲'),
-                    "Count": item['count']
+                    "Difficulty": item.get('difficulty', '🎲')
                 })
-            st.dataframe(pd.DataFrame(preview_data), width='stretch', hide_index=True)
+            st.dataframe(pd.DataFrame(preview_data), width="stretch", hide_index=True)
 
     return config_list
 
@@ -737,85 +740,41 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
             
 
         st.divider()
-        
-        # Actions Row
-        ac1, ac2, ac3 = st.columns([0.8, 1, 0.4])
+
+        # Actions Row - tighter layout
+        ac1, ac2, ac3 = st.columns([0.3, 0.75, 0.4])
         with ac1:
             # Two Checkboxes for Status
             st.caption("Status")
-            
+
             # Ensure session state is synced with object if not set (first run)
             k_sel = f"{key_prefix}_sel_{q.db_uuid or q.id}"
             k_rej = f"{key_prefix}_rej_{q.db_uuid or q.id}"
-            
+
             if k_sel not in st.session_state: st.session_state[k_sel] = q.is_selected
             if k_rej not in st.session_state: st.session_state[k_rej] = q.is_rejected
-            
-            c_s, c_r = st.columns(2)
+
+            c_s, c_r = st.columns([1, 1], gap="small")
             c_s.checkbox("Select", key=k_sel, on_change=update_selection, args=(list_key, index, 'select', key_prefix))
             c_r.checkbox("Reject", key=k_rej, on_change=update_selection, args=(list_key, index, 'reject', key_prefix))
-            
+
             # Display current state visually
             if q.is_selected:
                 st.markdown('<span class="status-badge status-selected">Selected</span>', unsafe_allow_html=True)
             elif q.is_rejected:
                 st.markdown('<span class="status-badge status-rejected">Rejected</span>', unsafe_allow_html=True)
-                
+
         with ac2:
             # Feedback
             fb = st.text_input("Feedback / Reason (Mandatory)", value=q.user_feedback or "", key=f"{key_prefix}_fb_{q.db_uuid or q.id}")
             q.user_feedback = fb
             if not fb:
                 st.caption("⚠️ Feedback required")
-        
+
         with ac3:
             st.caption("Action")
-            col_regen, col_config = st.columns([1, 1])
-
-            with col_regen:
-                st.button("⚡ Regenerate", key=f"{key_prefix}_regen_{q.db_uuid or q.id}",
-                          on_click=regenerate_callback, args=(q, key_prefix, None))
-
-            with col_config:
-                with st.popover("⚙️ Config", use_container_width=False):
-                    st.caption("**Regenerate with Custom Settings**")
-
-                    # Parse current blueprint
-                    current_meta = parse_blueprint(q.question_blueprint)
-
-                    # Configuration options
-                    patterns = ["Standard", "Statement Based", "Assertion-Reason", "List Based", "Matching", "Chronological"]
-                    difficulties = ["Easy", "Moderate", "Hard"]
-                    cognitive_levels = ["Recall/Recognition", "Understanding", "Application", "Analysis"]
-
-                    new_pattern = st.selectbox("Pattern", patterns,
-                                              index=patterns.index(current_meta["pattern"]) if current_meta["pattern"] in patterns else 0,
-                                              key=f"{key_prefix}_cfg_pat_{q.db_uuid or q.id}")
-                    new_diff = st.selectbox("Difficulty", difficulties,
-                                           index=difficulties.index(current_meta["difficulty"]) if current_meta["difficulty"] in difficulties else 1,
-                                           key=f"{key_prefix}_cfg_diff_{q.db_uuid or q.id}")
-                    new_cog = st.selectbox("Cognitive Level", cognitive_levels,
-                                          index=cognitive_levels.index(current_meta["cognitive"]) if current_meta["cognitive"] in cognitive_levels else 0,
-                                          key=f"{key_prefix}_cfg_cog_{q.db_uuid or q.id}")
-
-                    if st.button("Apply & Regenerate", key=f"{key_prefix}_apply_regen_{q.db_uuid or q.id}"):
-                        # Create modified blueprint
-                        blueprint_lines = q.question_blueprint.split('\n') if q.question_blueprint else []
-                        new_blueprint_lines = []
-
-                        for line in blueprint_lines:
-                            if line.strip().startswith("Format:") or line.strip().startswith("Question Type:"):
-                                new_blueprint_lines.append(f"Format: {new_pattern}")
-                            elif line.strip().startswith("Difficulty:"):
-                                new_blueprint_lines.append(f"Difficulty: {new_diff}")
-                            elif line.strip().startswith("Cognitive"):
-                                new_blueprint_lines.append(f"Cognitive Skill: {new_cog}")
-                            else:
-                                new_blueprint_lines.append(line)
-
-                        custom_blueprint = '\n'.join(new_blueprint_lines)
-                        regenerate_callback(q, key_prefix, custom_blueprint)
-                        st.rerun()
+            st.button("⚡ Regenerate", key=f"{key_prefix}_regen_{q.db_uuid or q.id}",
+                      on_click=regenerate_callback, args=(q, key_prefix, None))
 
 def parse_blueprint(blueprint_text):
     """Extract metadata from blueprint text"""
@@ -999,12 +958,29 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
 
 # --- Main App ---
 
-# Header with logo - detect theme and use appropriate version
-theme = st.get_option("theme.base")
-if theme == "dark":
-    st.image("logo-dark.svg", width=300)
-else:
-    st.image("logo.svg", width=300)
+# Header with logo
+with open("logo.svg", "r") as f:
+    light_svg = f.read()
+with open("logo-dark.svg", "r") as f:
+    dark_svg = f.read()
+
+# Use CSS media query for system theme preference (most reliable)
+st.markdown(f'''
+<style>
+    .logo-light {{ display: block; }}
+    .logo-dark {{ display: none; }}
+    @media (prefers-color-scheme: dark) {{
+        .logo-light {{ display: none; }}
+        .logo-dark {{ display: block; }}
+    }}
+</style>
+<div style="width:300px">
+    <div class="logo-light">{light_svg}</div>
+    <div class="logo-dark">{dark_svg}</div>
+</div>
+''', unsafe_allow_html=True)
+
+st.caption("Prelims Question Answer Generator")
 
 # Sidebar Mode
 mode = st.sidebar.radio("Mode", ["Prelims Test Series", "Random Generation"])
@@ -1249,90 +1225,177 @@ if mode == "Prelims Test Series":
 
 elif mode == "Random Generation":
     st.header("Random Question Generation")
-    
-    col1, col2 = st.columns([1, 1])
-    
+
+    # Pattern and Cognitive options with Randomize
+    RANDOMIZE_OPTION = "🎲 Randomize"
+    pattern_options = [
+        RANDOMIZE_OPTION,
+        "Standard Single-Correct",
+        "Standard Single-Incorrect",
+        "Multiple-Statement-2 (Correct)",
+        "Multiple-Statement-3 (Correct)",
+        "Multiple-Statement-4 (Correct)",
+        "Multiple-Statement-2 (Incorrect)",
+        "Multiple-Statement-3 (Incorrect)",
+        "Multiple-Statement-4 (Incorrect)",
+        "How Many - Statement",
+        "How Many Pairs Correct/Incorrect",
+        "How Many Sets/Triplets",
+        "Std 2-Stmt Assertion-Reason",
+        "Complex 3-Stmt Assertion-Reason",
+        "Chronological Ordering",
+        "Geographical Sequencing"
+    ]
+    cognitive_options = [
+        RANDOMIZE_OPTION,
+        "Recall/Recognition",
+        "Comprehension/Conceptual",
+        "Application/Analysis",
+        "Higher Reasoning/Synthesis"
+    ]
+    difficulty_options = [RANDOMIZE_OPTION, "Easy", "Moderate", "Difficult"]
+
+    col1, col2, col3 = st.columns([1, 1, 1.5])
+
     with col1:
-        num_q = st.number_input("Number of Questions", 1, 50, 5)
+        num_q_input = st.number_input("Number of Questions", 1, 50, 5)
         topic_input = st.text_input("Topic / Subject")
-    
+
     with col2:
-        source_text = st.text_area("Context / Text (Optional)", height=100)
+        main_pattern = st.selectbox("Question Pattern", options=pattern_options, index=0)
+        main_cognitive = st.selectbox("Cognitive Level", options=cognitive_options, index=0)
+        main_difficulty = st.selectbox("Difficulty", options=difficulty_options, index=0)
+
+    with col3:
+        source_text = st.text_area("Context / Text (Optional)", height=68)
         uploaded_pdf = st.file_uploader("Upload PDF (Optional)", type=['pdf'])
-    
-    config_list = get_config_table("random")
+
+    # Advanced configuration (collapsed by default)
+    # Initialize session state for tracking if user enabled advanced config
+    if 'use_advanced_config' not in st.session_state:
+        st.session_state.use_advanced_config = False
+
+    config_list = []
+    table_sum = 0
+
+    use_advanced = st.checkbox("⚙️ Use Advanced Configuration", value=st.session_state.use_advanced_config, key="adv_config_checkbox")
+    st.session_state.use_advanced_config = use_advanced
+
+    if use_advanced:
+        with st.container(border=True):
+            config_list = get_config_table("random")
+            table_sum = sum(item['count'] for item in config_list) if config_list else 0
+
+    # Only use table sum if advanced config is enabled, otherwise use top input
+    num_q = table_sum if use_advanced and table_sum > 0 else num_q_input
+
+    # Show configuration preview when not using advanced config
+    if not use_advanced and num_q_input > 0:
+        with st.expander("📋 Preview Distribution", expanded=False):
+            # Build expanded preview similar to advanced config
+            import random as rnd
+
+            # Available options for randomization (without the Randomize marker)
+            all_patterns = pattern_options[1:]  # Skip RANDOMIZE_OPTION
+            all_cognitive = cognitive_options[1:]
+            all_difficulty = difficulty_options[1:]
+
+            # Generate preview data for each question
+            preview_data = []
+            for i in range(num_q_input):
+                # Distribute randomized values
+                if main_pattern == RANDOMIZE_OPTION:
+                    q_pattern = all_patterns[i % len(all_patterns)]
+                else:
+                    q_pattern = main_pattern
+
+                if main_cognitive == RANDOMIZE_OPTION:
+                    q_cognitive = all_cognitive[i % len(all_cognitive)]
+                else:
+                    q_cognitive = main_cognitive
+
+                if main_difficulty == RANDOMIZE_OPTION:
+                    q_difficulty = all_difficulty[i % len(all_difficulty)]
+                else:
+                    q_difficulty = main_difficulty
+
+                q_topic = topic_input if topic_input and topic_input.strip() else "🎲"
+
+                preview_data.append({
+                    "#": i + 1,
+                    "Topic": q_topic,
+                    "Pattern": q_pattern,
+                    "Cognitive": q_cognitive,
+                    "Difficulty": q_difficulty
+                })
+
+            st.dataframe(pd.DataFrame(preview_data), width="stretch", hide_index=True)
+
+            # Show randomization info
+            randomized = []
+            if main_pattern == RANDOMIZE_OPTION:
+                randomized.append("Pattern")
+            if main_cognitive == RANDOMIZE_OPTION:
+                randomized.append("Cognitive")
+            if main_difficulty == RANDOMIZE_OPTION:
+                randomized.append("Difficulty")
+            if not topic_input or not topic_input.strip():
+                randomized.append("Topic")
+            if randomized:
+                st.info(f"🎲 Auto-distributing: {', '.join(randomized)}")
+
+    st.metric("Total Questions to Generate", num_q)
 
     if st.button("🚀 Generate", type="primary"):
-        # 1. Check counts
-        table_sum = sum(item['count'] for item in config_list)
-        
-        if table_sum > num_q:
-            st.error(f"Error: The total questions in the table ({table_sum}) exceeds the requested Number of Questions ({num_q}). Please adjust the counts.")
-        elif not config_list and table_sum == 0 and num_q > 0:
-             # If table is empty, we might want to auto-generate ALL based on main inputs?
-             # User said: "if he defines rows ... if less than 10.. remaining ... will be from upper"
-             # This implies if NO rows are defined, ALL are from upper.
-             # But `get_config_table` defaults to 1 row.
-             # If user deletes all rows?
-             # Let's handle validation next.
-             pass
+        if num_q == 0:
+            st.error("Please add at least one row with Count > 0 in the configuration table.")
+        else:
+            # Validate Topic Source
+            has_context = bool((source_text and source_text.strip()) or uploaded_pdf)
+            has_main_topic = bool(topic_input and topic_input.strip())
 
-        # 2. Validate Topic Source
-        has_context = bool((source_text and source_text.strip()) or uploaded_pdf)
-        has_main_topic = bool(topic_input and topic_input.strip())
-        
-        rows_have_topics = True
-        if not config_list:
-             pass # Handled below
-        else:
-            for item in config_list:
-                if not item.get('topic') or not item['topic'].strip():
-                    rows_have_topics = False
-                    break
-        
-        # Validation Logic
-        if not config_list and not (has_context or has_main_topic):
-             st.error("Please provide a Topic/Context or add rows to the configuration.")
-        elif config_list and not (has_context or has_main_topic or rows_have_topics):
-             st.error("Missing Topic Source! Please provide either:\n1. A Context (Text/PDF)\n2. A Main Topic/Subject\n3. Specific Topics for EVERY row in the configuration table.")
-        elif table_sum > num_q:
-             pass # Error already shown above
-        else:
-            # Prepare Final Config
-            final_config = []
-            
-            # Process Table Rows
-            for item in config_list:
-                # If row topic is missing, use main topic if available.
-                if (not item['topic'] or not item['topic'].strip()) and has_main_topic:
-                    item['topic'] = topic_input
-                final_config.append(item)
-            
-            # Handle Remaining Questions
-            if table_sum < num_q:
-                remainder = num_q - table_sum
-                # Create a remainder row
-                # Uses Main Topic if available, otherwise empty (Context)
-                rem_topic = topic_input if has_main_topic else ""
-                
-                final_config.append({
-                    "topic": rem_topic,
-                    "pattern": "Standard Single-Correct", # Default
-                    "cognitive": "Comprehension/Conceptual", # Default
-                    "difficulty": "Moderate", # Default
-                    "count": remainder
-                })
-            
-            # If config is completely empty (no rows and table_sum=0), create one full row
-            if not final_config and num_q > 0:
-                 rem_topic = topic_input if has_main_topic else ""
-                 final_config.append({
-                    "topic": rem_topic,
-                    "pattern": "Standard Single-Correct",
-                    "cognitive": "Comprehension/Conceptual",
-                    "difficulty": "Moderate",
-                    "count": num_q
-                })
+            rows_have_topics = True
+            if config_list:
+                for item in config_list:
+                    if not item.get('topic') or not item['topic'].strip():
+                        rows_have_topics = False
+                        break
+
+            # Validation Logic
+            if not config_list and not (has_context or has_main_topic):
+                st.error("Please provide a Topic/Context or add rows to the configuration.")
+            elif config_list and not (has_context or has_main_topic or rows_have_topics):
+                st.error("Missing Topic Source! Please provide either:\n1. A Context (Text/PDF)\n2. A Main Topic/Subject\n3. Specific Topics for EVERY row in the configuration table.")
+            else:
+                # Prepare Final Config
+                final_config = []
+
+                # Process Table Rows
+                for item in config_list:
+                    # If row topic is missing, use main topic if available.
+                    if (not item['topic'] or not item['topic'].strip()) and has_main_topic:
+                        item['topic'] = topic_input
+                    final_config.append(item)
+
+                # If config is completely empty (no rows), create one full row using main inputs
+                if not final_config and num_q > 0:
+                    rem_topic = topic_input if has_main_topic else ""
+                    # Check if main fields are randomized
+                    pattern_val = None if main_pattern == RANDOMIZE_OPTION else main_pattern
+                    cognitive_val = None if main_cognitive == RANDOMIZE_OPTION else main_cognitive
+                    difficulty_val = None if main_difficulty == RANDOMIZE_OPTION else main_difficulty
+
+                    final_config.append({
+                        "topic": rem_topic,
+                        "pattern": pattern_val,
+                        "cognitive": cognitive_val,
+                        "difficulty": difficulty_val,
+                        "count": num_q,
+                        "_randomize_topic": not has_main_topic,
+                        "_randomize_pattern": main_pattern == RANDOMIZE_OPTION,
+                        "_randomize_cognitive": main_cognitive == RANDOMIZE_OPTION,
+                        "_randomize_difficulty": main_difficulty == RANDOMIZE_OPTION
+                    })
 
             with st.status("Generating...", expanded=True) as status:
                 try:
