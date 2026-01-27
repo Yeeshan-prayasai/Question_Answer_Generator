@@ -25,7 +25,15 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
-
+COST_ANALYSIS_FORMATTED (1).pdf
+COST_ANALYSIS_FORMATTED.md
+COST_ANALYSIS_FORMATTED.pdf
+COST_ANALYSIS.md
+insi_test.json
+nul
+setup_database.py
+token_calculator.py
+.env.backup
 # Logs
 *.log
 

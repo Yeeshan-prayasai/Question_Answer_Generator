@@ -50,61 +50,85 @@ class QuestionManager:
         Executes generation and translation for a single question plan.
         plan_tuple is (index, plan_string, subject, start_number)
         """
-        index, plan_text, subject, start_number = plan_tuple
-        # The sequential number is start_number + index
-        q_num = start_number + index
-        
-        subject = plan_text.split('Subject:')[-1].strip().split('\n')[0] if 'Subject:' in plan_text else subject
+        try:
+            index, plan_text, subject, start_number = plan_tuple
+            # The sequential number is start_number + index
+            q_num = start_number + index
 
-        print(f'Running Iteration for Q{q_num}')
-        
-        que = await self.generator.generate_question(plan_text, self.global_token_usage)
-        
-        que_hindi = None
-        if que:
-            que_hindi = await self.translator.translate_question(que.question, que.options, self.global_token_usage)
-            
-        out = None
-        if que and que_hindi:
-            out = Question(
-                id=q_num, # Display ID
-                db_uuid=str(uuid.uuid4()), # Assign unique ID immediately
-                question_number=q_num, # Sequential number
-                question_english=que.question,
-                options_english=que.options,
-                question_hindi=que_hindi.question,
-                options_hindi=que_hindi.options,
-                answer=que.answer,
-                question_blueprint=plan_text,
-                subject=subject,
-                is_selected=False # Default to False
-            )
-        return out
+            subject = plan_text.split('Subject:')[-1].strip().split('\n')[0] if 'Subject:' in plan_text else subject
+
+            print(f'Running Iteration for Q{q_num}')
+
+            que = await self.generator.generate_question(plan_text, self.global_token_usage)
+
+            que_hindi = None
+            if que:
+                try:
+                    que_hindi = await self.translator.translate_question(que.question, que.options, self.global_token_usage)
+                except Exception as e:
+                    print(f"⚠️ Translation failed for Q{q_num}: {str(e)}")
+                    # Continue without Hindi translation
+                    pass
+
+            out = None
+            if que and que_hindi:
+                out = Question(
+                    id=q_num, # Display ID
+                    db_uuid=str(uuid.uuid4()), # Assign unique ID immediately
+                    question_number=q_num, # Sequential number
+                    question_english=que.question,
+                    options_english=que.options,
+                    question_hindi=que_hindi.question,
+                    options_hindi=que_hindi.options,
+                    answer=que.answer,
+                    question_blueprint=plan_text,
+                    subject=subject,
+                    is_selected=False # Default to False
+                )
+            return out
+        except Exception as e:
+            print(f"⚠️ Error generating question at index {plan_tuple[0] if plan_tuple else 'unknown'}: {str(e)}")
+            return None
 
     async def _collate_questions(self, plans: List[str], subject: str = "General", start_number: int = 1) -> TestPaper:
-        print('Request initiated for num of plans:', len(plans))
-        # Pass start_number logic to tasks
-        modified_plans = [(ind, p, subject, start_number) for ind, p in enumerate(plans)]
-        final_data = []
-        chunk_jump = 15
-        
-        for chunk in range(0, len(modified_plans), chunk_jump):
-            # Create a list of async tasks (coroutines)
-            tasks = [self._per_question_execution(plan) 
-                        for plan in modified_plans[chunk:chunk+chunk_jump]]
-            print('tasks--- ', len(tasks))
-            all_data = await asyncio.gather(*tasks)
-            final_data.extend(all_data)
+        try:
+            print('Request initiated for num of plans:', len(plans))
+            # Pass start_number logic to tasks
+            modified_plans = [(ind, p, subject, start_number) for ind, p in enumerate(plans)]
+            final_data = []
+            chunk_jump = 15
 
-        # Filter out None results
-        final_data = [i for i in final_data if i]
-        
-        # Sort by question number just in case
-        final_data.sort(key=lambda x: x.question_number)
-        
-        print('Request completed for num of question:', len(final_data))
-        
-        response = TestPaper(questions=final_data)
+            for chunk in range(0, len(modified_plans), chunk_jump):
+                try:
+                    # Create a list of async tasks (coroutines)
+                    tasks = [self._per_question_execution(plan)
+                                for plan in modified_plans[chunk:chunk+chunk_jump]]
+                    print('tasks--- ', len(tasks))
+                    all_data = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    # Filter out exceptions and log them
+                    for i, result in enumerate(all_data):
+                        if isinstance(result, Exception):
+                            print(f"⚠️ Task {chunk + i} failed: {str(result)}")
+                        else:
+                            final_data.append(result)
+                except Exception as e:
+                    print(f"⚠️ Error processing chunk {chunk}: {str(e)}")
+                    # Continue with next chunk
+                    continue
+
+            # Filter out None results
+            final_data = [i for i in final_data if i]
+
+            # Sort by question number just in case
+            final_data.sort(key=lambda x: x.question_number)
+
+            print('Request completed for num of question:', len(final_data))
+
+            response = TestPaper(questions=final_data)
+        except Exception as e:
+            print(f"⚠️ Error in _collate_questions: {str(e)}")
+            response = TestPaper(questions=[])
         
         return response
 

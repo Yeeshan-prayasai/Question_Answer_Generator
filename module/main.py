@@ -7,8 +7,10 @@ import uuid
 import json
 import time
 import warnings
+import random
 from io import BytesIO
 from dotenv import load_dotenv
+from collections import Counter
 
 # Suppress async cleanup warnings in Python 3.13+
 warnings.filterwarnings('ignore', message='Event loop is closed')
@@ -314,6 +316,13 @@ def auto_distribute_empty_fields(config_list):
     For large tests (>50 questions), uses UPSC-like distribution.
     For small tests, distributes evenly across different types.
     """
+    # Validate input
+    if not config_list:
+        return []
+
+    if not isinstance(config_list, list):
+        raise TypeError("config_list must be a list")
+
     # Available options
     syllabus_subjects = list(syllabus.keys())
 
@@ -344,20 +353,29 @@ def auto_distribute_empty_fields(config_list):
     difficulty_levels = ["Moderate", "Difficult", "Easy"]
 
     # UPSC-like distribution for large tests (percentages)
+    # General distribution (100% baseline):
+    # - How Many Statements: 30%
+    # - Multiple Statements (3/4 stmt, 70/30 correct/incorrect): 20%
+    # - Assertion-Reason (60/40 2-stmt/3-stmt): 20%
+    # - Two Statements (Multiple-Statement-2): 10%
+    # - Matching pairs (60/40 how many/which): 10%
+    # - Standard Single Correct: 10%
     UPSC_PATTERN_DIST = {
-        "Standard Single-Correct": 20,
-        "Multiple-Statement-2 (Correct)": 15,
-        "Multiple-Statement-3 (Correct)": 15,
-        "Standard Single-Incorrect": 10,
-        "Multiple-Statement-2 (Incorrect)": 8,
-        "Multiple-Statement-3 (Incorrect)": 8,
-        "Std 2-Stmt Assertion-Reason": 8,
-        "Multiple-Statement-4 (Correct)": 4,
-        "Multiple-Statement-4 (Incorrect)": 4,
-        "How Many - Statement": 3,
-        "Complex 3-Stmt Assertion-Reason": 2,
-        "Chronological Ordering": 2,
-        "Geographical Sequencing": 1
+        "How Many - Statement": 30,
+        "Multiple-Statement-3 (Correct)": 10,          # 20% MS3/4 total
+        "Multiple-Statement-4 (Correct)": 4,           # 70% correct
+        "Multiple-Statement-3 (Incorrect)": 4,         # 30% incorrect
+        "Multiple-Statement-4 (Incorrect)": 2,
+        "Std 2-Stmt Assertion-Reason": 12,             # 20% A-R total, 60% 2-stmt
+        "Complex 3-Stmt Assertion-Reason": 8,          # 40% 3-stmt
+        "Multiple-Statement-2 (Correct)": 7,           # 10% MS2 total
+        "Multiple-Statement-2 (Incorrect)": 3,         # 70/30 split
+        "How Many Pairs Correct/Incorrect": 6,         # 10% matching total
+        "How Many Sets/Triplets": 4,                   # 60/40 split
+        "Standard Single-Correct": 10,
+        "Chronological Ordering": 0,                   # Added per subject
+        "Geographical Sequencing": 0,                  # Added per subject
+        "Standard Single-Incorrect": 0
     }
 
     UPSC_COGNITIVE_DIST = {
@@ -372,32 +390,106 @@ def auto_distribute_empty_fields(config_list):
         "Difficult": 35,
         "Easy": 15
     }
+    def get_distribution(total_count, options, upsc_dist=None, subject=None):
+        """Get list of options distributed across total_count questions.
 
-    def get_distribution(total_count, options, upsc_dist=None):
-        """Get list of options distributed across total_count questions."""
+        Args:
+            total_count: Number of questions to generate
+            options: List of available options
+            upsc_dist: Base distribution dictionary
+            subject: Subject name for subject-specific adjustments (History/Geography)
+        """
         num_options = len(options)
 
-        if total_count > 50 and upsc_dist:
-            # Large test: use UPSC-like percentage distribution
+        if upsc_dist:
+            # Use weighted UPSC-like percentage distribution
+            # Apply subject-specific adjustments
+            working_dist = dict(upsc_dist)  # Copy to avoid modifying original
+
+            # Subject-specific pattern adjustments
+            if subject and subject.lower() == "history":
+                # History: Add 20% Chronological Ordering, scale others by 0.8 (100%->80%)
+                scale_factor = 0.8
+                for key in working_dist:
+                    if key != "Chronological Ordering":
+                        working_dist[key] = round(working_dist[key] * scale_factor, 1)
+                working_dist["Chronological Ordering"] = 20
+            elif subject and subject.lower() == "geography":
+                # Geography: Add 15% Geo Sequencing, scale others by 0.85 (100%->85%)
+                scale_factor = 0.85
+                for key in working_dist:
+                    if key not in ["Geographical Sequencing", "Chronological Ordering"]:
+                        working_dist[key] = round(working_dist[key] * scale_factor, 1)
+                working_dist["Geographical Sequencing"] = 15
+                # Chronological can still appear in Geography but not mandated
+            else:
+                # Other subjects: Chronological can appear (5%)
+                if "Chronological Ordering" in working_dist:
+                    scale_factor = 0.95
+                    for key in working_dist:
+                        if key != "Chronological Ordering":
+                            working_dist[key] = round(working_dist[key] * scale_factor, 1)
+                    working_dist["Chronological Ordering"] = 5
+
             result = []
             remaining = total_count
-            items = list(upsc_dist.items())
-            for i, (option, percentage) in enumerate(items):
-                if i == len(items) - 1:
-                    count = remaining
-                else:
-                    count = round(total_count * percentage / 100)
-                    count = min(count, remaining)
-                result.extend([option] * count)
+            items = list(working_dist.items())
+
+            # Filter out patterns with 0 percentage
+            items = [(option, percentage) for option, percentage in items if percentage > 0]
+
+            # Sort by percentage descending to prioritize high-percentage items
+            items.sort(key=lambda x: x[1], reverse=True)
+
+            # First pass: allocate based on percentages
+            allocated = {}
+            for option, percentage in items:
+                count = round(total_count * percentage / 100)
+                count = min(count, remaining)
+                allocated[option] = count
                 remaining -= count
+
+            # Second pass: distribute remaining questions to highest percentage items
+            # that haven't reached their theoretical maximum
+            if remaining > 0:
+                for option, percentage in items:
+                    if remaining <= 0:
+                        break
+                    # Calculate theoretical maximum (rounded up)
+                    theoretical_max = int(total_count * percentage / 100) + 1
+                    if allocated[option] < theoretical_max:
+                        allocated[option] += 1
+                        remaining -= 1
+
+            # Build result list
+            for option, count in allocated.items():
+                if count > 0:
+                    result.extend([option] * count)
+
             return result
         else:
-            # Small/medium test: cycle through options evenly
+            # Fallback: distribute evenly across options (for topics, cognitive, difficulty)
+            # Use random selection to avoid bias toward first items in list
             result = []
-            for i in range(total_count):
-                result.append(options[i % num_options])
+
+            # Calculate base count per option and remainder
+            base_count = total_count // num_options
+            remainder = total_count % num_options
+
+            # Create a shuffled list of options
+            shuffled_options = list(options)
+            random.shuffle(shuffled_options)
+
+            # Distribute: some options get base_count+1, others get base_count
+            for i, option in enumerate(shuffled_options):
+                count = base_count + (1 if i < remainder else 0)
+                result.extend([option] * count)
+
+            # Shuffle the final result to mix up the order
+            random.shuffle(result)
             return result
 
+    # Main processing logic
     result = []
 
     for item in config_list:
@@ -417,11 +509,6 @@ def auto_distribute_empty_fields(config_list):
         else:
             topics = [item.get('topic', '')] * total_count
 
-        if randomize_pattern:
-            patterns = get_distribution(total_count, pattern_types, UPSC_PATTERN_DIST)
-        else:
-            patterns = [item.get('pattern')] * total_count
-
         if randomize_cognitive:
             cognitives = get_distribution(total_count, cognitive_levels, UPSC_COGNITIVE_DIST)
         else:
@@ -432,18 +519,74 @@ def auto_distribute_empty_fields(config_list):
         else:
             difficulties = [item.get('difficulty')] * total_count
 
+        # For patterns, we need to handle topic-specific distributions
+        if randomize_pattern:
+            # When both topic and pattern are randomized, we need subject-specific pattern distribution
+            if randomize_topic:
+                # For small counts, use a global weighted distribution instead of per-subject
+                # to avoid skewing when each subject gets only 1-2 questions
+                if total_count < 20:
+                    # Use general distribution (with 5% chronological for mixed subjects)
+                    patterns = get_distribution(total_count, pattern_types, UPSC_PATTERN_DIST, "Mixed")
+                else:
+                    # For larger counts, use subject-specific distributions
+                    topic_counts = Counter(topics)
+
+                    patterns = []
+                    for subject_name, subject_count in topic_counts.items():
+                        # Get pattern distribution for this subject
+                        subject_patterns = get_distribution(subject_count, pattern_types, UPSC_PATTERN_DIST, subject_name)
+                        patterns.extend(subject_patterns)
+
+                    # Shuffle patterns to mix them up (otherwise they'll be grouped by subject)
+                    random.shuffle(patterns)
+            else:
+                # Topic is fixed, extract subject for pattern distribution
+                topic_str = item.get('topic', '')
+                subject = None
+                if topic_str:
+                    # Extract subject from topic string
+                    # Handle formats: "Geography", "Geography: Subtopic", "Indian geography", etc.
+                    topic_lower = topic_str.lower()
+
+                    # Check if topic contains any of our main subjects
+                    if 'geography' in topic_lower:
+                        subject = 'Geography'
+                    elif 'history' in topic_lower:
+                        subject = 'History'
+                    elif 'polity' in topic_lower:
+                        subject = 'Polity'
+                    elif 'economy' in topic_lower or 'economic' in topic_lower:
+                        subject = 'Economy'
+                    elif 'environment' in topic_lower or 'ecology' in topic_lower:
+                        subject = 'Environment'
+                    elif 'science' in topic_lower or 'technology' in topic_lower or 'tech' in topic_lower:
+                        subject = 'Science & Tech'
+                    elif 'current affairs' in topic_lower:
+                        subject = 'Current Affairs'
+                    else:
+                        # Fallback: try to extract from "Subject: Subtopic" format
+                        subject = topic_str.split(':')[0].strip() if ':' in topic_str else topic_str.strip()
+
+                patterns = get_distribution(total_count, pattern_types, UPSC_PATTERN_DIST, subject)
+        else:
+            patterns = [item.get('pattern')] * total_count
+
         # Create individual question configs
         for i in range(total_count):
-            result.append({
-                'topic': topics[i],
-                'pattern': patterns[i],
-                'cognitive': cognitives[i],
-                'difficulty': difficulties[i],
-                'count': 1
-            })
+            try:
+                result.append({
+                    'topic': topics[i] if i < len(topics) and topics[i] else '',
+                    'pattern': patterns[i] if i < len(patterns) and patterns[i] else 'Standard Single-Correct',
+                    'cognitive': cognitives[i] if i < len(cognitives) and cognitives[i] else 'Comprehension/Conceptual',
+                    'difficulty': difficulties[i] if i < len(difficulties) and difficulties[i] else 'Moderate',
+                    'count': 1
+                })
+            except (IndexError, KeyError) as e:
+                # Skip malformed items but continue processing
+                continue
 
     return result
-
 
 def get_config_table(key_suffix):
     """Reusable config table for different modes"""
@@ -526,6 +669,37 @@ def get_config_table(key_suffix):
         hide_index=True
     )
 
+    # Add duplicate row buttons
+    if not edited_df.empty:
+        col_dup1, col_dup2, col_dup3 = st.columns([1, 1, 2])
+        with col_dup1:
+            if st.button("➕ Duplicate Last Row", key=f"duplicate_last_{key_suffix}"):
+                # Duplicate the last row
+                last_row = edited_df.iloc[-1].to_dict()
+                new_df = pd.concat([edited_df, pd.DataFrame([last_row])], ignore_index=True)
+                st.session_state[f'config_df_{key_suffix}'] = new_df
+                st.rerun()
+
+        with col_dup2:
+            row_to_duplicate = st.number_input(
+                "Row to duplicate:",
+                min_value=1,
+                max_value=len(edited_df),
+                value=1,
+                step=1,
+                key=f"row_select_{key_suffix}"
+            )
+
+        with col_dup3:
+            if st.button(f"📋 Duplicate Row #{row_to_duplicate}", key=f"duplicate_selected_{key_suffix}"):
+                # Duplicate the selected row
+                row_idx = row_to_duplicate - 1  # Convert to 0-indexed
+                if 0 <= row_idx < len(edited_df):
+                    selected_row = edited_df.iloc[row_idx].to_dict()
+                    new_df = pd.concat([edited_df, pd.DataFrame([selected_row])], ignore_index=True)
+                    st.session_state[f'config_df_{key_suffix}'] = new_df
+                    st.rerun()
+
     # Check for randomized fields and show summary
     if not edited_df.empty:
         randomize_topic = edited_df['Topic'].isna().sum() + (edited_df['Topic'] == '').sum()
@@ -592,8 +766,18 @@ def get_config_table(key_suffix):
     # Preview Distribution - show what will actually be generated
     if config_list:
         with st.expander("📊 Preview Distribution", expanded=False):
-            total_questions = sum(item['count'] for item in config_list)
-            st.metric("Total Questions", total_questions)
+            # Add shuffle button at the top
+            col_metric, col_shuffle = st.columns([2, 1])
+            with col_metric:
+                total_questions = sum(item['count'] for item in config_list)
+                st.metric("Total Questions", total_questions)
+            with col_shuffle:
+                if st.button("🔀 Shuffle Preview", key="shuffle_preview_advanced"):
+                    # Force regeneration by incrementing a counter
+                    if 'preview_shuffle_count_adv' not in st.session_state:
+                        st.session_state.preview_shuffle_count_adv = 0
+                    st.session_state.preview_shuffle_count_adv += 1
+                    st.rerun()
 
             # Group by topic for summary
             topic_counts = {}
@@ -638,8 +822,13 @@ def get_config_table(key_suffix):
             # Detailed breakdown table
             st.markdown("---")
             st.markdown("**Detailed Breakdown:**")
+
+            # Shuffle the order for display
+            shuffled_config = list(config_list)
+            random.shuffle(shuffled_config)
+
             preview_data = []
-            for i, item in enumerate(config_list):
+            for i, item in enumerate(shuffled_config):
                 preview_data.append({
                     "#": i + 1,
                     "Topic": item.get('topic', '') or '🎲',
@@ -1068,6 +1257,123 @@ if mode == "Prelims Test Series":
                     else:
                         num_q = st.number_input("Number of Questions", 1, 100, 100 if test_type == "Full Length" else 20)
 
+                    # Preview Distribution
+                    if num_q > 0:
+                        st.markdown("### Preview Distribution")
+
+                        # Build preview config based on blueprint mode
+                        preview_config = []
+
+                        if blueprint_mode == "Configure via UI" and ui_config_list:
+                            preview_config = ui_config_list.copy()
+                            # Auto-fill remainder if needed
+                            if ui_table_sum < num_q:
+                                remainder = num_q - ui_table_sum
+                                rem_topic = subject_topic if test_type == "Sectional" else ""
+                                preview_config.append({
+                                    "topic": rem_topic,
+                                    "pattern": None,  # Randomize patterns
+                                    "cognitive": None,  # Randomize cognitive
+                                    "difficulty": None,  # Randomize difficulty
+                                    "count": remainder,
+                                    "_randomize_topic": not rem_topic,
+                                    "_randomize_pattern": True,
+                                    "_randomize_cognitive": True,
+                                    "_randomize_difficulty": True
+                                })
+                        elif blueprint_mode == "Default Blueprint":
+                            # Use weighted distribution instead of loading Excel file
+                            preview_config = [{
+                                "topic": subject_topic if test_type == "Sectional" and subject_topic else "",
+                                "pattern": None,
+                                "cognitive": None,
+                                "difficulty": None,
+                                "count": num_q,
+                                "_randomize_topic": not (test_type == "Sectional" and subject_topic),
+                                "_randomize_pattern": True,
+                                "_randomize_cognitive": True,
+                                "_randomize_difficulty": True
+                            }]
+                        elif blueprint_mode == "Upload Custom Blueprint" and uploaded_bp_file:
+                            try:
+                                df_bp = pd.read_excel(uploaded_bp_file)
+                                preview_config = parse_blueprint_config(df_bp=df_bp)
+
+                                bp_sum = sum(item['count'] for item in preview_config)
+                                if bp_sum < num_q:
+                                    remainder = num_q - bp_sum
+                                    rem_topic = subject_topic if test_type == "Sectional" else ""
+                                    preview_config.append({
+                                        "topic": rem_topic,
+                                        "pattern": None,  # Randomize patterns
+                                        "cognitive": None,  # Randomize cognitive
+                                        "difficulty": None,  # Randomize difficulty
+                                        "count": remainder,
+                                        "_randomize_topic": not rem_topic,
+                                        "_randomize_pattern": True,
+                                        "_randomize_cognitive": True,
+                                        "_randomize_difficulty": True
+                                    })
+                            except Exception as e:
+                                st.warning(f"Could not parse uploaded blueprint for preview: {e}")
+                        else:
+                            # Default: create a single config entry with randomization
+                            preview_config = [{
+                                "topic": subject_topic if test_type == "Sectional" and subject_topic else "",
+                                "pattern": None,  # Set to None to trigger randomization
+                                "cognitive": None,  # Set to None to trigger randomization
+                                "difficulty": None,  # Set to None to trigger randomization
+                                "count": num_q,
+                                "_randomize_topic": not (test_type == "Sectional" and subject_topic),
+                                "_randomize_pattern": True,
+                                "_randomize_cognitive": True,
+                                "_randomize_difficulty": True
+                            }]
+
+                        # Use auto_distribute_empty_fields to get the actual distribution
+                        if preview_config:
+                            expanded_config = auto_distribute_empty_fields(preview_config)
+
+                            if expanded_config:
+                                # Shuffle the order to show questions in random order
+                                random.shuffle(expanded_config)
+
+                                # Generate preview data from expanded config
+                                preview_data = []
+                                for i, item in enumerate(expanded_config):
+                                    preview_data.append({
+                                        "#": i + 1,
+                                        "Topic": item.get('topic', 'N/A')[:30],
+                                        "Pattern": item.get('pattern', 'N/A')[:35],
+                                        "Cognitive": item.get('cognitive', 'N/A')[:25],
+                                        "Difficulty": item.get('difficulty', 'N/A')
+                                    })
+
+                                # Display preview table
+                                preview_df = pd.DataFrame(preview_data)
+                                st.dataframe(preview_df, width="stretch", height=300)
+
+                                # Add shuffle button
+                                if st.button("🔀 Shuffle Preview", key="shuffle_fulltest_preview"):
+                                    st.rerun()
+
+                                # Show distribution summary
+                                st.markdown("**Distribution Summary:**")
+                                pattern_counts = {}
+                                for item in expanded_config:
+                                    pattern = item.get('pattern', 'Unknown')
+                                    pattern_counts[pattern] = pattern_counts.get(pattern, 0) + 1
+
+                                summary_col1, summary_col2 = st.columns(2)
+                                with summary_col1:
+                                    for i, (pattern, count) in enumerate(sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)):
+                                        if i < len(pattern_counts) // 2 + 1:
+                                            st.text(f"• {pattern}: {count}")
+                                with summary_col2:
+                                    for i, (pattern, count) in enumerate(sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)):
+                                        if i >= len(pattern_counts) // 2 + 1:
+                                            st.text(f"• {pattern}: {count}")
+
                     # Generate Button
                     if st.button("Generate Test", type="primary"):
                         # Calculate table sum if needed
@@ -1102,18 +1408,29 @@ if mode == "Prelims Test Series":
                                             rem_topic = subject_topic if test_type == "Sectional" else ""
                                             config_list.append({
                                                 "topic": rem_topic,
-                                                "pattern": "Standard Single-Correct",
-                                                "cognitive": "Comprehension/Conceptual",
-                                                "difficulty": "Moderate",
-                                                "count": remainder
+                                                "pattern": None,
+                                                "cognitive": None,
+                                                "difficulty": None,
+                                                "count": remainder,
+                                                "_randomize_topic": not rem_topic,
+                                                "_randomize_pattern": True,
+                                                "_randomize_cognitive": True,
+                                                "_randomize_difficulty": True
                                             })
                                             
                                     elif blueprint_mode == "Default Blueprint":
-                                        try:
-                                            df_bp = pd.read_excel('./prompts/default_blueprint.xlsx')
-                                            config_list = parse_blueprint_config(df_bp=df_bp)
-                                        except Exception as e:
-                                            st.error(f"Error loading default blueprint: {e}")
+                                        # Use weighted distribution instead of loading Excel file
+                                        config_list = [{
+                                            "topic": subject_topic if subject_topic else "",
+                                            "pattern": None,
+                                            "cognitive": None,
+                                            "difficulty": None,
+                                            "count": num_q,
+                                            "_randomize_topic": not subject_topic,
+                                            "_randomize_pattern": True,
+                                            "_randomize_cognitive": True,
+                                            "_randomize_difficulty": True
+                                        }]
                                             
                                     elif blueprint_mode == "Upload Custom Blueprint":
                                         if uploaded_bp_file:
@@ -1130,20 +1447,28 @@ if mode == "Prelims Test Series":
                                                  rem_topic = subject_topic if test_type == "Sectional" else ""
                                                  config_list.append({
                                                      "topic": rem_topic,
-                                                     "pattern": "Standard Single-Correct",
-                                                     "cognitive": "Comprehension/Conceptual",
-                                                     "difficulty": "Moderate",
-                                                     "count": remainder
+                                                     "pattern": None,
+                                                     "cognitive": None,
+                                                     "difficulty": None,
+                                                     "count": remainder,
+                                                     "_randomize_topic": not rem_topic,
+                                                     "_randomize_pattern": True,
+                                                     "_randomize_cognitive": True,
+                                                     "_randomize_difficulty": True
                                                  })
                                     
                                     if not config_list:
                                         if num_q > 0:
                                              config_list = [{
                                                  "topic": subject_topic if subject_topic else "",
-                                                 "pattern": "Standard Single-Correct",
-                                                 "cognitive": "Comprehension/Conceptual",
-                                                 "difficulty": "Moderate",
-                                                 "count": num_q
+                                                 "pattern": None,
+                                                 "cognitive": None,
+                                                 "difficulty": None,
+                                                 "count": num_q,
+                                                 "_randomize_topic": not subject_topic,
+                                                 "_randomize_pattern": True,
+                                                 "_randomize_cognitive": True,
+                                                 "_randomize_difficulty": True
                                              }]
                                     
                                     # Override total questions if config provided?
@@ -1280,6 +1605,12 @@ elif mode == "Random Generation":
     use_advanced = st.checkbox("⚙️ Use Advanced Configuration", value=st.session_state.use_advanced_config, key="adv_config_checkbox")
     st.session_state.use_advanced_config = use_advanced
 
+    # Show which input method is being used
+    if use_advanced:
+        st.info("📋 **Using Configuration Table** - Questions will be generated from the table rows below")
+    else:
+        st.info("📝 **Using Main Input Boxes** - Questions will be generated from the input fields above")
+
     if use_advanced:
         with st.container(border=True):
             config_list = get_config_table("random")
@@ -1291,41 +1622,45 @@ elif mode == "Random Generation":
     # Show configuration preview when not using advanced config
     if not use_advanced and num_q_input > 0:
         with st.expander("📋 Preview Distribution", expanded=False):
-            # Build expanded preview similar to advanced config
-            import random as rnd
+            # Add a shuffle button to regenerate the preview
+            col_preview_left, col_preview_right = st.columns([3, 1])
+            with col_preview_right:
+                if st.button("🔀 Shuffle Preview", key="shuffle_preview_simple"):
+                    # Force regeneration by incrementing a counter
+                    if 'preview_shuffle_count' not in st.session_state:
+                        st.session_state.preview_shuffle_count = 0
+                    st.session_state.preview_shuffle_count += 1
+                    st.rerun()
 
-            # Available options for randomization (without the Randomize marker)
-            all_patterns = pattern_options[1:]  # Skip RANDOMIZE_OPTION
-            all_cognitive = cognitive_options[1:]
-            all_difficulty = difficulty_options[1:]
+            # Generate preview using the same logic as auto_distribute_empty_fields
+            # Create a config item that mimics what will be sent to generation
+            preview_config = [{
+                'topic': topic_input if topic_input and topic_input.strip() else '',
+                'pattern': None if main_pattern == RANDOMIZE_OPTION else main_pattern,
+                'cognitive': None if main_cognitive == RANDOMIZE_OPTION else main_cognitive,
+                'difficulty': None if main_difficulty == RANDOMIZE_OPTION else main_difficulty,
+                'count': num_q_input,
+                '_randomize_topic': not topic_input or not topic_input.strip(),
+                '_randomize_pattern': main_pattern == RANDOMIZE_OPTION,
+                '_randomize_cognitive': main_cognitive == RANDOMIZE_OPTION,
+                '_randomize_difficulty': main_difficulty == RANDOMIZE_OPTION
+            }]
 
-            # Generate preview data for each question
+            # Use auto_distribute_empty_fields to get the actual distribution
+            expanded_config = auto_distribute_empty_fields(preview_config)
+
+            # Shuffle the order to show questions in random order
+            random.shuffle(expanded_config)
+
+            # Generate preview data from expanded config
             preview_data = []
-            for i in range(num_q_input):
-                # Distribute randomized values
-                if main_pattern == RANDOMIZE_OPTION:
-                    q_pattern = all_patterns[i % len(all_patterns)]
-                else:
-                    q_pattern = main_pattern
-
-                if main_cognitive == RANDOMIZE_OPTION:
-                    q_cognitive = all_cognitive[i % len(all_cognitive)]
-                else:
-                    q_cognitive = main_cognitive
-
-                if main_difficulty == RANDOMIZE_OPTION:
-                    q_difficulty = all_difficulty[i % len(all_difficulty)]
-                else:
-                    q_difficulty = main_difficulty
-
-                q_topic = topic_input if topic_input and topic_input.strip() else "🎲"
-
+            for i, item in enumerate(expanded_config):
                 preview_data.append({
                     "#": i + 1,
-                    "Topic": q_topic,
-                    "Pattern": q_pattern,
-                    "Cognitive": q_cognitive,
-                    "Difficulty": q_difficulty
+                    "Topic": item['topic'] if item['topic'] else "🎲",
+                    "Pattern": item['pattern'],
+                    "Cognitive": item['cognitive'],
+                    "Difficulty": item['difficulty']
                 })
 
             st.dataframe(pd.DataFrame(preview_data), width="stretch", hide_index=True)
