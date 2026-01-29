@@ -131,6 +131,16 @@ if 'manager' not in st.session_state:
 
 manager = st.session_state.manager
 
+# --- HEARTBEAT / KEEP-ALIVE ---
+@st.fragment(run_every=120)  # Reruns every 2 minutes (120 seconds)
+def keep_alive_heartbeat():
+    """
+    Silent fragment that sends a 'ping' to the server every 2 minutes.
+    This prevents the WebSocket connection from timing out while 
+    experts are reading or researching a question.
+    """
+    pass
+
 # --- Page Config ---
 st.set_page_config(
     page_title="PrayasAI UPSC Generator",
@@ -1752,3 +1762,4 @@ elif mode == "Random Generation":
         
         # We use a dummy test code for docx download
         render_review_interface(qs, "random_generated", 'random_questions')
+keep_alive_heartbeat()
