@@ -372,10 +372,10 @@ def auto_distribute_empty_fields(config_list):
         "Multiple-Statement-2 (Incorrect)": 3,         # 70/30 split
         "How Many Pairs Correct/Incorrect": 6,         # 10% matching total
         "How Many Sets/Triplets": 4,                   # 60/40 split
-        "Standard Single-Correct": 10,
+        "Standard Single-Correct": 6,                  # 10% total, 60/40 split
+        "Standard Single-Incorrect": 4,                # 40% of Standard Single
         "Chronological Ordering": 0,                   # Added per subject
-        "Geographical Sequencing": 0,                  # Added per subject
-        "Standard Single-Incorrect": 0
+        "Geographical Sequencing": 0                   # Added per subject
     }
 
     UPSC_COGNITIVE_DIST = {
@@ -772,11 +772,12 @@ def get_config_table(key_suffix):
                 total_questions = sum(item['count'] for item in config_list)
                 st.metric("Total Questions", total_questions)
             with col_shuffle:
-                if st.button("🔀 Shuffle Preview", key="shuffle_preview_advanced"):
+                if st.button("🔀 Shuffle Preview", key=f"shuffle_preview_{key_suffix}"):
                     # Force regeneration by incrementing a counter
-                    if 'preview_shuffle_count_adv' not in st.session_state:
-                        st.session_state.preview_shuffle_count_adv = 0
-                    st.session_state.preview_shuffle_count_adv += 1
+                    shuffle_key = f'preview_shuffle_count_{key_suffix}'
+                    if shuffle_key not in st.session_state:
+                        st.session_state[shuffle_key] = 0
+                    st.session_state[shuffle_key] += 1
                     st.rerun()
 
             # Group by topic for summary
