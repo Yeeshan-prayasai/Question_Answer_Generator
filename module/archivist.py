@@ -98,37 +98,68 @@ class ArchivistAgent:
 
                 ans = q.answer.upper() # Ensure upper
 
-                # Check if we have a UUID already, if not generate one
-                if not q.db_uuid:
-                     q.db_uuid = str(uuid.uuid4())
+                # Parse test types (could be comma-separated string)
+                test_types = []
+                if q.test_type:
+                    if isinstance(q.test_type, str):
+                        test_types = [t.strip() for t in q.test_type.split(',') if t.strip()]
+                    elif isinstance(q.test_type, list):
+                        test_types = q.test_type
 
-                q_uuid = q.db_uuid
+                # If no test types selected, save once with NULL test_type
+                if not test_types:
+                    test_types = [None]
 
-                # Use UPSERT (INSERT ON CONFLICT) logic
-                cur.execute("""
-                    INSERT INTO upsc_prelims_ai_generated_que (
-                        id, test_code, question_number, subject, question_blueprint,
-                        question_hindi, options_hindi,
-                        question_english, options_english,
-                        answer, quality_pass_flag, quality_feedback
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET
-                        question_number = EXCLUDED.question_number,
-                        subject = EXCLUDED.subject,
-                        question_blueprint = EXCLUDED.question_blueprint,
-                        question_hindi = EXCLUDED.question_hindi,
-                        options_hindi = EXCLUDED.options_hindi,
-                        question_english = EXCLUDED.question_english,
-                        options_english = EXCLUDED.options_english,
-                        answer = EXCLUDED.answer,
-                        quality_pass_flag = EXCLUDED.quality_pass_flag,
-                        quality_feedback = EXCLUDED.quality_feedback
-                """, (
-                    q_uuid, test_code, q.question_number, q.subject, q.question_blueprint,
-                    q.question_hindi, json.dumps(opts_hin, ensure_ascii=False),
-                    q.question_english, json.dumps(opts_eng, ensure_ascii=False),
-                    ans, q.is_selected, q.user_feedback
-                ))
+                # Save question once for each test type
+                for test_type in test_types:
+                    # Check if we have a UUID already, if not generate one
+                    # For multiple test types, generate unique UUID for each
+                    if len(test_types) == 1:
+                        if not q.db_uuid:
+                            q.db_uuid = str(uuid.uuid4())
+                        q_uuid = q.db_uuid
+                    else:
+                        # Generate new UUID for each test type variant
+                        q_uuid = str(uuid.uuid4())
+
+                    # Use UPSERT (INSERT ON CONFLICT) logic
+                    cur.execute("""
+                        INSERT INTO upsc_prelims_ai_generated_que (
+                            id, test_code, question_number, subject, topic, subtopic,
+                            month, year, test_type,
+                            prone_to_silly_mistakes, pattern, content_type,
+                            question_blueprint, question_hindi, options_hindi,
+                            question_english, options_english,
+                            answer, quality_pass_flag, quality_feedback
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            question_number = EXCLUDED.question_number,
+                            subject = EXCLUDED.subject,
+                            topic = EXCLUDED.topic,
+                            subtopic = EXCLUDED.subtopic,
+                            month = EXCLUDED.month,
+                            year = EXCLUDED.year,
+                            test_type = EXCLUDED.test_type,
+                            prone_to_silly_mistakes = EXCLUDED.prone_to_silly_mistakes,
+                            pattern = EXCLUDED.pattern,
+                            content_type = EXCLUDED.content_type,
+                            question_blueprint = EXCLUDED.question_blueprint,
+                            question_hindi = EXCLUDED.question_hindi,
+                            options_hindi = EXCLUDED.options_hindi,
+                            question_english = EXCLUDED.question_english,
+                            options_english = EXCLUDED.options_english,
+                            answer = EXCLUDED.answer,
+                            quality_pass_flag = EXCLUDED.quality_pass_flag,
+                            quality_feedback = EXCLUDED.quality_feedback
+                    """, (
+                        q_uuid, test_code, q.question_number, q.subject, q.topic, q.subtopic,
+                        q.month, q.year, test_type,
+                        q.prone_to_silly_mistakes, q.pattern, q.content_type,
+                        q.question_blueprint,
+                        q.question_hindi, json.dumps(opts_hin, ensure_ascii=False),
+                        q.question_english, json.dumps(opts_eng, ensure_ascii=False),
+                        ans, q.is_selected, q.user_feedback
+                    ))
             conn.commit()
             return True
         except Exception as e:

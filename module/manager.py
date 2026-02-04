@@ -83,6 +83,14 @@ class QuestionManager:
                     answer=que.answer,
                     question_blueprint=plan_text,
                     subject=subject,
+                    topic=None,  # Will be set during review/tagging
+                    subtopic=None,  # Will be set during review/tagging
+                    month=None,  # Will be set during review
+                    year=None,  # Will be set during review
+                    test_type=None,  # Will be set during review
+                    prone_to_silly_mistakes=None,  # Will be set during review
+                    pattern=None,  # Will be set during review
+                    content_type=None,  # Will be set during review
                     is_selected=False # Default to False
                 )
             return out

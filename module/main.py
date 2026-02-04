@@ -98,6 +98,51 @@ syllabus = {
     ]
 }
 
+# Load syllabus from CSV
+@st.cache_data
+def load_syllabus_csv():
+    """Load and parse syllabus.csv into a structured format"""
+    csv_path = os.path.join(root_dir, 'syllabus.csv')
+    if not os.path.exists(csv_path):
+        st.error(f"syllabus.csv not found at {csv_path}")
+        return {}
+
+    df = pd.read_csv(csv_path)
+    syllabus_data = {}
+
+    for _, row in df.iterrows():
+        subject = row['subject']
+        topic = row['topic']
+        subtopic = row['subtopic']
+        description = row['description']
+
+        if subject not in syllabus_data:
+            syllabus_data[subject] = {}
+        if topic not in syllabus_data[subject]:
+            syllabus_data[subject][topic] = []
+
+        syllabus_data[subject][topic].append({
+            'subtopic': subtopic,
+            'description': description,
+            'full_path': f"{subject} > {topic} > {subtopic}"
+        })
+
+    return syllabus_data
+
+syllabus_csv = load_syllabus_csv()
+
+# Searchable topics list is not needed for generation - only for review tagging interface
+# def get_searchable_topics_list():
+#     """Build a flat searchable list of all subject > topic > subtopic combinations"""
+#     searchable = ["🎲 Randomize"]  # Default option
+#     for subject, topics in syllabus_csv.items():
+#         for topic, subtopics in topics.items():
+#             for subtopic_data in subtopics:
+#                 searchable.append(subtopic_data['full_path'])
+#     return searchable
+#
+# searchable_topics = get_searchable_topics_list()
+
 # Import from module
 try:
     from module.manager import QuestionManager
@@ -210,6 +255,12 @@ st.markdown("""
         color: #856404;
         border-radius: 4px;
         margin-bottom: 1rem;
+    }
+
+    /* Simple text size improvements */
+    .stTextArea textarea {
+        font-size: 1.1rem !important;
+        line-height: 1.7 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -702,7 +753,9 @@ def get_config_table(key_suffix):
 
     # Check for randomized fields and show summary
     if not edited_df.empty:
-        randomize_topic = edited_df['Topic'].isna().sum() + (edited_df['Topic'] == '').sum()
+        randomize_topic = (edited_df['Topic'].isna().sum() +
+                          (edited_df['Topic'] == '').sum() +
+                          (edited_df['Topic'] == RANDOMIZE_MARKER).sum())
         randomize_pattern = (edited_df['Pattern'] == RANDOMIZE_MARKER).sum() + edited_df['Pattern'].isna().sum()
         randomize_cognitive = (edited_df['Cognitive'] == RANDOMIZE_MARKER).sum() + edited_df['Cognitive'].isna().sum()
         randomize_difficulty = (edited_df['Difficulty'] == RANDOMIZE_MARKER).sum() + edited_df['Difficulty'].isna().sum()
@@ -867,7 +920,10 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
     Renders a single question editor block.
     """
     # Use key_prefix for widgets
-    with st.container(border=True):
+    # Add HTML anchor for scroll position
+    st.markdown(f'<div id="question_{q.db_uuid or q.id}"></div>', unsafe_allow_html=True)
+
+    with st.container(border=False):
         col_top, col_act = st.columns([0.7, 0.3])
         with col_top:
             # Always show dynamic number based on index
@@ -886,45 +942,38 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
 
         # Content Columns: English (Editable) vs Hindi (View/Auto-update)
         c1, c2 = st.columns(2)
-        
+
         with c1:
             st.caption("English (Editable)")
-            new_q_eng = st.text_area("Question Text", q.question_english, height='content', key=f"{key_prefix}_q_eng_{q.db_uuid or q.id}")
-            
+            new_q_eng = st.text_area("Question Text", q.question_english, height=400, key=f"{key_prefix}_q_eng_{q.db_uuid or q.id}")
+
+            st.markdown("**Options:**")
             # Options
             new_opts_eng = []
             for i, opt in enumerate(q.options_english):
-                val = st.text_area(f"({chr(97+i)})", opt, height='content', key=f"{key_prefix}_opt_eng_{q.db_uuid or q.id}_{i}")
+                val = st.text_area(f"Option ({chr(65+i)})", opt, key=f"{key_prefix}_opt_eng_{q.db_uuid or q.id}_{i}")
                 new_opts_eng.append(val)
-                
-            new_ans = st.selectbox("Answer", ['A','B','C','D'], index=['A','B','C','D'].index(q.answer), key=f"{key_prefix}_ans_{q.db_uuid or q.id}")
-            
+
+            new_ans = st.selectbox("✓ Correct Answer", ['A','B','C','D'], index=['A','B','C','D'].index(q.answer), key=f"{key_prefix}_ans_{q.db_uuid or q.id}")
+
             # Update Object state immediately for these fields
             q.question_english = new_q_eng
             q.options_english = new_opts_eng
             q.answer = new_ans
 
-            st.markdown("---")
-            if st.button("🔄 Update Edits...", key=f"{key_prefix}_trans_{q.db_uuid or q.id}"):
-                with st.spinner("Translating..."):
-                    try:
-                        q_hindi_obj = asyncio.run(manager.translate_single_question(q.question_english, q.options_english))
-                        if q_hindi_obj:
-                            q.question_hindi = q_hindi_obj.question
-                            q.options_hindi = q_hindi_obj.options
-                            st.success("Translated!")
-                            st.rerun()
-                        else:
-                            st.error("Translation returned empty.")
-                    except Exception as e:
-                        st.error(f"Translation failed: {e}")
-
         with c2:
             st.caption("Hindi Version")
-            st.markdown("")
-            st.markdown(f"**{q.question_hindi}**")
+
+            # Question text
+            st.text_area("प्रश्न (Question)", q.question_hindi, height=400, key=f"{key_prefix}_q_hin_display_{q.db_uuid or q.id}", disabled=True)
+
+            st.markdown("**विकल्प (Options):**")
+            # Options
             for i, opt in enumerate(q.options_hindi):
-                st.markdown(f"({chr(97+i)}) {opt}")
+                st.text_area(f"विकल्प ({chr(65+i)})", opt, key=f"{key_prefix}_opt_hin_display_{q.db_uuid or q.id}_{i}", disabled=True)
+
+            # Show correct answer
+            st.markdown(f"**✓ Correct Answer: {q.answer}**")
             
             
 
@@ -954,16 +1003,290 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
                 st.markdown('<span class="status-badge status-rejected">Rejected</span>', unsafe_allow_html=True)
 
         with ac2:
-            # Feedback
-            fb = st.text_input("Feedback / Reason (Mandatory)", value=q.user_feedback or "", key=f"{key_prefix}_fb_{q.db_uuid or q.id}")
+            # Feedback - only mandatory for selected questions
+            fb_label = "Feedback / Reason (Mandatory for Selected)" if q.is_selected else "Feedback / Reason (Optional)"
+            fb = st.text_input(fb_label, value=q.user_feedback or "", key=f"{key_prefix}_fb_{q.db_uuid or q.id}")
             q.user_feedback = fb
-            if not fb:
-                st.caption("⚠️ Feedback required")
+            if q.is_selected and not fb:
+                st.caption("⚠️ Feedback required for selected questions")
 
         with ac3:
             st.caption("Action")
             st.button("⚡ Regenerate", key=f"{key_prefix}_regen_{q.db_uuid or q.id}",
                       on_click=regenerate_callback, args=(q, key_prefix, None))
+
+        # Tagging Section - Subject/Topic/Subtopic from syllabus.csv
+        # Only show for selected questions
+        if q.is_selected:
+            st.divider()
+
+            # Initialize session state for this question's tags if not exists
+            tag_state_key = f"{key_prefix}_tag_state_{q.db_uuid or q.id}"
+            expander_state_key = f"{key_prefix}_expander_state_{q.db_uuid or q.id}"
+
+            if tag_state_key not in st.session_state:
+                # Auto-tag from blueprint if available
+                blueprint_metadata = parse_blueprint(q.question_blueprint) if q.question_blueprint else {}
+                blueprint_topic = blueprint_metadata.get("topic", "")
+                blueprint_subtopic = blueprint_metadata.get("subtopic", "")
+
+                # Try to match blueprint topic/subtopic with syllabus
+                auto_subject = q.subject or ''
+                auto_topic = q.topic or ''
+                auto_subtopic = q.subtopic or ''
+
+                # If not already tagged, try to auto-match from blueprint
+                if not auto_subject and blueprint_topic:
+                    # Search syllabus for matching topic
+                    for subj, topics_dict in syllabus_csv.items():
+                        if blueprint_topic in topics_dict:
+                            auto_subject = subj
+                            auto_topic = blueprint_topic
+                            # Try to find subtopic
+                            if blueprint_subtopic:
+                                for subtopic_obj in topics_dict[blueprint_topic]:
+                                    if subtopic_obj['subtopic'] == blueprint_subtopic:
+                                        auto_subtopic = blueprint_subtopic
+                                        break
+                            break
+
+                st.session_state[tag_state_key] = {
+                    'subject': auto_subject,
+                    'topic': auto_topic,
+                    'subtopic': auto_subtopic
+                }
+
+            if expander_state_key not in st.session_state:
+                # Expand if tags are incomplete
+                has_tags = bool(st.session_state[tag_state_key]['subject'] and
+                              st.session_state[tag_state_key]['topic'] and
+                              st.session_state[tag_state_key]['subtopic'])
+                st.session_state[expander_state_key] = not has_tags
+
+            with st.expander("🏷️ Question Tags (Required for Save)", expanded=st.session_state[expander_state_key]):
+                st.caption("Tag this question with standardized subject/topic/subtopic from the syllabus")
+
+                # Get available subjects from syllabus
+                subjects_list = [""] + list(syllabus_csv.keys())
+
+                # Find current index for subject
+                current_subject = st.session_state[tag_state_key]['subject']
+                current_subject_idx = 0
+                if current_subject and current_subject in subjects_list:
+                    current_subject_idx = subjects_list.index(current_subject)
+
+                tag_col1, tag_col2, tag_col3 = st.columns(3)
+
+                with tag_col1:
+                    selected_subject = st.selectbox(
+                        "Subject",
+                        options=subjects_list,
+                        index=current_subject_idx,
+                        key=f"{key_prefix}_subject_{q.db_uuid or q.id}",
+                        help="Select the main subject"
+                    )
+                    # Update session state when changed
+                    if selected_subject != st.session_state[tag_state_key]['subject']:
+                        st.session_state[tag_state_key]['subject'] = selected_subject
+                        # Reset topic and subtopic when subject changes
+                        st.session_state[tag_state_key]['topic'] = ''
+                        st.session_state[tag_state_key]['subtopic'] = ''
+
+                # Get topics for selected subject
+                topics_list = [""]
+                current_topic = st.session_state[tag_state_key]['topic']
+                current_topic_idx = 0
+                if selected_subject and selected_subject in syllabus_csv:
+                    topics_list = [""] + list(syllabus_csv[selected_subject].keys())
+                    if current_topic and current_topic in topics_list:
+                        current_topic_idx = topics_list.index(current_topic)
+
+                with tag_col2:
+                    selected_topic = st.selectbox(
+                        "Topic",
+                        options=topics_list,
+                        index=current_topic_idx,
+                        key=f"{key_prefix}_topic_{q.db_uuid or q.id}",
+                        help="Select the topic within the subject",
+                        disabled=not selected_subject
+                    )
+                    # Update session state when changed
+                    if selected_topic != st.session_state[tag_state_key]['topic']:
+                        st.session_state[tag_state_key]['topic'] = selected_topic
+                        # Reset subtopic when topic changes
+                        st.session_state[tag_state_key]['subtopic'] = ''
+
+                # Get subtopics for selected subject/topic
+                subtopics_list = [""]
+                current_subtopic = st.session_state[tag_state_key]['subtopic']
+                current_subtopic_idx = 0
+                if selected_subject and selected_topic and selected_subject in syllabus_csv:
+                    if selected_topic in syllabus_csv[selected_subject]:
+                        subtopics_data = syllabus_csv[selected_subject][selected_topic]
+                        subtopics_list = [""] + [s['subtopic'] for s in subtopics_data]
+                        if current_subtopic and current_subtopic in subtopics_list:
+                            current_subtopic_idx = subtopics_list.index(current_subtopic)
+
+                with tag_col3:
+                    selected_subtopic = st.selectbox(
+                        "Subtopic",
+                        options=subtopics_list,
+                        index=current_subtopic_idx,
+                        key=f"{key_prefix}_subtopic_{q.db_uuid or q.id}",
+                        help="Select the specific subtopic",
+                        disabled=not (selected_subject and selected_topic)
+                    )
+                    # Update session state
+                    if selected_subtopic != st.session_state[tag_state_key]['subtopic']:
+                        st.session_state[tag_state_key]['subtopic'] = selected_subtopic
+
+                # Update the question object with selected tags from session state
+                q.subject = st.session_state[tag_state_key]['subject'] if st.session_state[tag_state_key]['subject'] else None
+                q.topic = st.session_state[tag_state_key]['topic'] if st.session_state[tag_state_key]['topic'] else None
+                q.subtopic = st.session_state[tag_state_key]['subtopic'] if st.session_state[tag_state_key]['subtopic'] else None
+
+                # Show warning if tags are incomplete
+                if not (q.subject and q.topic and q.subtopic):
+                    st.warning("⚠️ Please complete all three tags (Subject, Topic, Subtopic) before saving selected questions.")
+
+                # Additional Metadata Fields
+                st.caption("Additional Metadata (Compulsory for Selected Questions)")
+
+                # First row: Pattern, Content Type, Silly Mistakes
+                meta_col1, meta_col2, meta_col3 = st.columns(3)
+
+                with meta_col1:
+                    # Pattern options (same as generation patterns)
+                    pattern_options = [
+                        "Not Set",
+                        "Standard Single-Correct",
+                        "Standard Single-Incorrect",
+                        "Multiple-Statement-2 (Correct)",
+                        "Multiple-Statement-3 (Correct)",
+                        "Multiple-Statement-4 (Correct)",
+                        "Multiple-Statement-2 (Incorrect)",
+                        "Multiple-Statement-3 (Incorrect)",
+                        "Multiple-Statement-4 (Incorrect)",
+                        "How Many - Statement",
+                        "How Many Pairs Correct/Incorrect",
+                        "How Many Sets/Triplets",
+                        "Std 2-Stmt Assertion-Reason",
+                        "Complex 3-Stmt Assertion-Reason",
+                        "Chronological Ordering",
+                        "Geographical Sequencing"
+                    ]
+
+                    # Auto-fill pattern from blueprint if not already set
+                    if not q.pattern and q.question_blueprint:
+                        blueprint_metadata = parse_blueprint(q.question_blueprint)
+                        blueprint_pattern = blueprint_metadata.get("pattern", "N/A")
+                        if blueprint_pattern != "N/A" and blueprint_pattern in pattern_options:
+                            q.pattern = blueprint_pattern
+
+                    # Find current index
+                    current_pattern_idx = 0
+                    if q.pattern and q.pattern in pattern_options:
+                        current_pattern_idx = pattern_options.index(q.pattern)
+
+                    pattern_tag = st.selectbox(
+                        "Question Pattern (Required)",
+                        options=pattern_options,
+                        index=current_pattern_idx,
+                        key=f"{key_prefix}_pattern_tag_{q.db_uuid or q.id}",
+                        help="Select the question pattern/type - REQUIRED for selected questions"
+                    )
+                    q.pattern = pattern_tag if pattern_tag != "Not Set" else None
+                    if not q.pattern:
+                        st.caption("⚠️ Pattern required")
+
+                with meta_col2:
+                    content_type_options = ["Not Set", "Static", "Current Affairs"]
+
+                    # Auto-default to "Static" if not already set
+                    if not q.content_type:
+                        q.content_type = "Static"
+
+                    current_content_idx = 0
+                    if q.content_type and q.content_type in content_type_options:
+                        current_content_idx = content_type_options.index(q.content_type)
+
+                    content_type = st.selectbox(
+                        "Content Type (Required)",
+                        options=content_type_options,
+                        index=current_content_idx,
+                        key=f"{key_prefix}_content_{q.db_uuid or q.id}",
+                        help="Select whether this is a static or current affairs question - REQUIRED for selected questions"
+                    )
+                    q.content_type = content_type if content_type != "Not Set" else None
+                    if not q.content_type:
+                        st.caption("⚠️ Content type required")
+
+                with meta_col3:
+                    silly_mistakes = st.checkbox(
+                        "Prone to Silly Mistakes",
+                        value=q.prone_to_silly_mistakes if q.prone_to_silly_mistakes is not None else False,
+                        key=f"{key_prefix}_silly_{q.db_uuid or q.id}",
+                        help="Check if this question commonly leads to silly mistakes"
+                    )
+                    q.prone_to_silly_mistakes = silly_mistakes
+
+                # Second row: Test Type, Month, Year
+                st.caption("Test Details (For PYQ questions)")
+                test_col1, test_col2, test_col3 = st.columns(3)
+
+                with test_col1:
+                    test_type_options = ["Test Series", "Daily Challenge"]
+
+                    # Parse existing test_types (could be comma-separated string)
+                    current_test_types = []
+                    if q.test_type:
+                        if isinstance(q.test_type, str):
+                            current_test_types = [t.strip() for t in q.test_type.split(',') if t.strip() in test_type_options]
+                        elif isinstance(q.test_type, list):
+                            current_test_types = [t for t in q.test_type if t in test_type_options]
+
+                    selected_test_types = st.multiselect(
+                        "Test Type (Select one or more)",
+                        options=test_type_options,
+                        default=current_test_types,
+                        key=f"{key_prefix}_test_type_{q.db_uuid or q.id}",
+                        help="Select one or more test types. Question will be saved separately for each type."
+                    )
+
+                    # Store as comma-separated string for database
+                    q.test_type = ', '.join(selected_test_types) if selected_test_types else None
+
+                with test_col2:
+                    month_value = q.month if q.month is not None else None
+                    month = st.number_input(
+                        "Month (1-12)",
+                        min_value=1,
+                        max_value=12,
+                        value=month_value if month_value is not None else 1,
+                        step=1,
+                        key=f"{key_prefix}_month_{q.db_uuid or q.id}",
+                        help="Enter the month as a number (1-12) (for PYQ questions)"
+                    )
+                    # Always save the month value selected by user
+                    q.month = month
+
+                with test_col3:
+                    # Use current year as default instead of hardcoded value
+                    year_value = q.year if q.year is not None else None
+                    year = st.number_input(
+                        "Year",
+                        min_value=1950,
+                        max_value=2050,
+                        value=year_value if year_value is not None else 2024,
+                        step=1,
+                        key=f"{key_prefix}_year_{q.db_uuid or q.id}",
+                        help="Enter the year (for PYQ questions)"
+                    )
+                    # Always save the year value selected by user
+                    q.year = year
+
+    # Add separator between questions
+    st.markdown("---")
 
 def parse_blueprint(blueprint_text):
     """Extract metadata from blueprint text"""
@@ -992,8 +1315,34 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
     """
     Renders the review interface for Modify and New Test flows.
     """
+    # Add scroll position preservation
+    st.markdown("""
+        <script>
+        // Save scroll position before rerun
+        window.addEventListener('beforeunload', function() {
+            sessionStorage.setItem('scrollPos', window.pageYOffset);
+        });
+
+        // Restore scroll position after page load
+        document.addEventListener('DOMContentLoaded', function() {
+            const scrollPos = sessionStorage.getItem('scrollPos');
+            if (scrollPos) {
+                window.scrollTo(0, parseInt(scrollPos));
+            }
+        });
+
+        // Also try to restore immediately (for Streamlit reruns)
+        setTimeout(function() {
+            const scrollPos = sessionStorage.getItem('scrollPos');
+            if (scrollPos) {
+                window.scrollTo(0, parseInt(scrollPos));
+            }
+        }, 100);
+        </script>
+    """, unsafe_allow_html=True)
+
     if unsaved:
-        st.markdown('<div class="unsaved-warning">⚠️ <strong>Unsaved Test:</strong> This generated test is not yet saved to the database. Review and click "Save to Database" below.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="unsaved-warning">⚠️ <strong>Unsaved Test:</strong> This generated test is not yet saved to the database. Mark questions as "Select" and click "Save to Database" to save only the selected questions.</div>', unsafe_allow_html=True)
 
     # Stats
     total = len(questions)
@@ -1003,9 +1352,9 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
 
     st.metric("Total Questions", total)
     c1, c2, c3 = st.columns(3)
-    c1.metric("Selected", selected)
-    c2.metric("Rejected", rejected)
-    c3.metric("Pending", pending)
+    c1.metric("✅ Selected (Will be saved)", selected)
+    c2.metric("❌ Rejected (Will NOT be saved)", rejected)
+    c3.metric("⏳ Pending Review", pending)
 
     st.divider()
 
@@ -1070,7 +1419,7 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
 
     # Question List
     # We must iterate by index for reordering callbacks
-    with st.container(height=600, border=True):
+    with st.container(height=800, border=False):
         for i in range(len(questions)):
             # Re-fetch q from list in case of reorder
             q = questions[i]
@@ -1111,30 +1460,53 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
     c_save, c_dl = st.columns(2)
     with c_save:
         if st.button("💾 Save to Database", type="primary"):
-            # Validation
-            incomplete = []
-            for idx, q in enumerate(questions):
-                if not (q.is_selected or q.is_rejected):
-                    incomplete.append(f"Q{idx+1}: Status not set")
-                if not q.user_feedback:
-                    incomplete.append(f"Q{idx+1}: Feedback missing")
-            
-            if incomplete:
-                st.error("Cannot Save! Please resolve the following:\n" + "\n".join(incomplete[:5]))
-                if len(incomplete) > 5: st.error(f"...and {len(incomplete)-5} more.")
+            # Validation - only check selected questions
+            missing_tags = []
+            missing_feedback = []
+            missing_metadata = []
+
+            selected_questions = [q for q in questions if q.is_selected]
+
+            if not selected_questions:
+                st.error("❌ No questions selected! Please mark at least one question as 'Select' before saving.")
             else:
-                # Ensure sequential numbering based on current list order
                 for idx, q in enumerate(questions):
-                    q.question_number = idx + 1
-                
-                success = manager.archivist.save_questions(questions, test_code)
-                if success:
-                    st.success("Test saved successfully!")
-                    if unsaved:
-                        st.session_state.is_unsaved_new_test = False
-                        st.rerun()
+                    if q.is_selected:
+                        # Check feedback for selected questions
+                        if not q.user_feedback:
+                            missing_feedback.append(f"Q{idx+1}: Feedback missing")
+                        # Check tags for selected questions
+                        if not (q.subject and q.topic and q.subtopic):
+                            missing_tags.append(f"Q{idx+1}: Missing subject/topic/subtopic tags")
+                        # Check metadata for selected questions
+                        if not q.pattern:
+                            missing_metadata.append(f"Q{idx+1}: Pattern not set")
+                        if not q.content_type:
+                            missing_metadata.append(f"Q{idx+1}: Content Type not set")
+
+                if missing_feedback:
+                    st.error("❌ Cannot Save! Selected questions must have feedback:\n" + "\n".join(missing_feedback[:5]))
+                    if len(missing_feedback) > 5: st.error(f"...and {len(missing_feedback)-5} more.")
+                elif missing_tags:
+                    st.error("❌ Cannot Save! Selected questions must have complete tags (Subject/Topic/Subtopic):\n" + "\n".join(missing_tags[:5]))
+                    if len(missing_tags) > 5: st.error(f"...and {len(missing_tags)-5} more.")
+                elif missing_metadata:
+                    st.error("❌ Cannot Save! Selected questions must have Pattern and Content Type set:\n" + "\n".join(missing_metadata[:5]))
+                    if len(missing_metadata) > 5: st.error(f"...and {len(missing_metadata)-5} more.")
                 else:
-                    st.error("Failed to save changes.")
+                    # Ensure sequential numbering for selected questions only
+                    for idx, q in enumerate(selected_questions):
+                        q.question_number = idx + 1
+
+                    # Save only selected questions
+                    success = manager.archivist.save_questions(selected_questions, test_code)
+                    if success:
+                        st.success(f"✅ Successfully saved {len(selected_questions)} selected question(s) to database!")
+                        if unsaved:
+                            st.session_state.is_unsaved_new_test = False
+                            st.rerun()
+                    else:
+                        st.error("Failed to save changes.")
     
     with c_dl:
         # Download DOCX
