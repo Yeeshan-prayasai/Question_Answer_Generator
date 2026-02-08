@@ -1235,7 +1235,7 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
                 test_col1, test_col2, test_col3 = st.columns(3)
 
                 with test_col1:
-                    test_type_options = ["Test Series", "Daily Challenge"]
+                    test_type_options = ["Test Series", "Daily Challenge", "Topic-wise"]
 
                     # Parse existing test_types (could be comma-separated string)
                     current_test_types = []
