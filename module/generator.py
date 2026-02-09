@@ -250,8 +250,19 @@ This question requires EXACTLY 3 statements numbered 1, 2, 3. Include all 3 and 
 This question requires EXACTLY 2 statements (I and II or 1 and 2). Include both and end with the closing question.
 """
 
+            # Check if blueprint contains web research reference material
+            has_reference = "--- REFERENCE MATERIAL" in blueprint
+            reference_instruction = ""
+            if has_reference:
+                reference_instruction = (
+                    "\n### IMPORTANT: Reference Material is provided below the blueprint. "
+                    "You MUST use the facts, data points, and information from the Reference Material "
+                    "to create an accurate, up-to-date question. Do NOT rely on your training data for "
+                    "current affairs facts — use the Reference Material as your primary source of truth.\n"
+                )
+
             user_prompt = f'''## Use below details to generate the question.
-{pattern_constraint}
+{pattern_constraint}{reference_instruction}
 ### Question Blueprint
 {blueprint}
 

@@ -4,6 +4,7 @@ from .planner import PlannerAgent
 from .generator import GeneratorAgent
 from .translator import TranslatorAgent
 from .archivist import ArchivistAgent
+from .researcher import ResearcherAgent
 
 __all__ = [
     'QuestionManager',
@@ -12,5 +13,6 @@ __all__ = [
     'PlannerAgent',
     'GeneratorAgent',
     'TranslatorAgent',
-    'ArchivistAgent'
+    'ArchivistAgent',
+    'ResearcherAgent'
 ]

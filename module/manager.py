@@ -11,6 +11,7 @@ try:
     from .generator import GeneratorAgent
     from .translator import TranslatorAgent
     from .archivist import ArchivistAgent
+    from .researcher import ResearcherAgent
     from .models import Question, TestPaper
     from .utils import calculate_total_usage
 except ImportError:
@@ -18,6 +19,7 @@ except ImportError:
     from generator import GeneratorAgent
     from translator import TranslatorAgent
     from archivist import ArchivistAgent
+    from researcher import ResearcherAgent
     from models import Question, TestPaper
     from utils import calculate_total_usage
 
@@ -36,6 +38,7 @@ class QuestionManager:
             raise e
 
         self.planner = PlannerAgent(self.client)
+        self.researcher = ResearcherAgent(self.client)
         # Agents initialized with placeholders or sync client if compatible
         # But Generator and Translator use async client.
         # We will update their client reference at runtime.
@@ -61,6 +64,9 @@ class QuestionManager:
 
             que = await self.generator.generate_question(plan_text, self.global_token_usage)
 
+            # Strip reference material from blueprint before storing (saves DB space)
+            clean_blueprint = plan_text.split('\n\n--- REFERENCE MATERIAL')[0] if '--- REFERENCE MATERIAL' in plan_text else plan_text
+
             que_hindi = None
             if que:
                 try:
@@ -81,7 +87,7 @@ class QuestionManager:
                     question_hindi=que_hindi.question,
                     options_hindi=que_hindi.options,
                     answer=que.answer,
-                    question_blueprint=plan_text,
+                    question_blueprint=clean_blueprint,
                     subject=subject,
                     topic=None,  # Will be set during review/tagging
                     subtopic=None,  # Will be set during review/tagging
@@ -183,9 +189,43 @@ class QuestionManager:
         if source_text:
             context += source_text + "\n"
 
+        # Auto Web Research (if topic/context needs recent information)
+        research_sources = []
+        research_context_text = ""
+        has_topic = topic_input and topic_input.strip()
+        has_context = context.strip()
+        if has_topic or has_context:
+            try:
+                classify_topic = topic_input if has_topic else ""
+                classify_context = context if has_context else ""
+                if self.researcher.needs_web_search(classify_topic, classify_context, self.global_token_usage):
+                    print("ResearcherAgent: Topic/context needs web research, searching...")
+                    # Use topic if available, otherwise derive search query from context
+                    search_topic = topic_input if has_topic else context[:300]
+                    research_result = self.researcher.research_topic(
+                        topic=search_topic,
+                        context_hint=context[:500] if has_context and has_topic else "",
+                        global_token_usage=self.global_token_usage
+                    )
+                    if research_result['context']:
+                        research_context_text = research_result['context']
+                        context += "\n\n=== SUPPLEMENTARY WEB RESEARCH ===\n"
+                        context += research_context_text
+                        context += "\n=== END WEB RESEARCH ===\n"
+                        research_sources = research_result['sources']
+                        print(f"ResearcherAgent: Found {len(research_sources)} sources")
+                    else:
+                        print("ResearcherAgent: No results found, proceeding without web context")
+                else:
+                    print("ResearcherAgent: Topic/context does not need web research")
+            except Exception as e:
+                print(f"ResearcherAgent: Web research failed, continuing without: {e}")
+
         # Planner Step
+        print(f"[Manager] Context for planner: {len(context)} chars")
+
         plans_response = None
-        
+
         if context.strip():
             if topic_input:
 
@@ -216,7 +256,21 @@ class QuestionManager:
 
         if not plans_response or not plans_response.questions:
             print("Planning failed or returned no questions.")
-            return TestPaper(questions=[]), calculate_total_usage(self.global_token_usage)
+            return TestPaper(questions=[]), calculate_total_usage(self.global_token_usage), research_sources
+
+        # Attach web research context to each blueprint so the generator has the facts
+        if research_sources and research_context_text:
+            enriched_plans = []
+            for plan in plans_response.questions:
+                enriched_plan = (
+                    f"{plan}\n\n"
+                    f"--- REFERENCE MATERIAL (from web research, use these facts) ---\n"
+                    f"{research_context_text}\n"
+                    f"--- END REFERENCE MATERIAL ---"
+                )
+                enriched_plans.append(enriched_plan)
+            plans_response.questions = enriched_plans
+            print(f"[Manager] Attached web research context to {len(enriched_plans)} blueprints")
 
         # Determine subject
         current_subject = "General"
@@ -237,7 +291,7 @@ class QuestionManager:
         elapsed = end - start
         print(f"Overall Time: {elapsed:.1f} seconds.")
 
-        return questions_result, token_usage
+        return questions_result, token_usage, research_sources
 
     async def regenerate_question(self, blueprint: str) -> Optional[Question]:
         """Regenerates a single question based on blueprint."""

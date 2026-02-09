@@ -1443,7 +1443,7 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
                 if total_num == 0:
                      st.error("Please add at least one row with count > 0")
                 else:
-                    new_qs_obj, _ = asyncio.run(manager.generate_questions(
+                    new_qs_obj, _, _ = asyncio.run(manager.generate_questions(
                         source_text=None, uploaded_pdf=None, topic_input=None, # Topic is in config now
                         question_distribution=config_list,
                         start_question_number=start_num
@@ -1559,6 +1559,13 @@ if mode == "Prelims Test Series":
              st.rerun()
              
          if st.session_state.get('loaded_questions'):
+             # Show web research indicator
+             if st.session_state.get('research_sources'):
+                 sources = st.session_state.research_sources
+                 st.info(f"Web Research Active — {len(sources)} sources were used to enrich these questions with latest information.")
+                 with st.expander("View Web Sources", expanded=False):
+                     for src in sources:
+                         st.markdown(f"- [{src['title']}]({src['url']})")
              render_review_interface(st.session_state.loaded_questions, st.session_state.current_test_code, 'loaded_questions', unsaved=True)
          else:
              st.error("Error: Questions lost from session.")
@@ -1849,13 +1856,19 @@ if mode == "Prelims Test Series":
                                     # If user entered Num Questions separately, we might want to respect config.
                                     # Let's ignore num_q input if config is present, or validate.
                                     
-                                    questions_obj, usage = asyncio.run(manager.generate_questions(
+                                    questions_obj, usage, research_sources = asyncio.run(manager.generate_questions(
                                         source_text=None,
                                         uploaded_pdf=None, # Pass docx if no text
                                         topic_input=subject_topic if test_type == "Sectional" else None,
                                         question_distribution=config_list
                                     ))
-                                    
+
+                                    if research_sources:
+                                        st.session_state.research_sources = research_sources
+                                        status.write(f"Web research: {len(research_sources)} sources used")
+                                    else:
+                                        st.session_state.research_sources = []
+
                                     if questions_obj.questions:
                                         # DO NOT SAVE YET. Load into session.
                                         status.write("Finalizing Preview...")
@@ -2106,14 +2119,20 @@ elif mode == "Random Generation":
 
             with st.status("Generating...", expanded=True) as status:
                 try:
-                    questions_obj, usage = asyncio.run(manager.generate_questions(
+                    status.write("Analyzing topic & checking if web research is needed...")
+                    questions_obj, usage, research_sources = asyncio.run(manager.generate_questions(
                         source_text=source_text,
                         uploaded_pdf=uploaded_pdf,
                         topic_input=topic_input, # Passed for context planning
                         question_distribution=final_config
                     ))
+                    if research_sources:
+                        st.session_state.research_sources = research_sources
+                        status.update(label=f"Done! (Web research: {len(research_sources)} sources used)", state="complete")
+                    else:
+                        st.session_state.research_sources = []
+                        status.update(label="Done!", state="complete")
                     st.session_state.random_questions = questions_obj.questions
-                    status.update(label="Done!", state="complete")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -2121,7 +2140,16 @@ elif mode == "Random Generation":
     if 'random_questions' in st.session_state:
         qs = st.session_state.random_questions
         st.divider()
+
+        # Show web research indicator
+        if st.session_state.get('research_sources'):
+            sources = st.session_state.research_sources
+            st.info(f"Web Research Active — {len(sources)} sources were used to enrich these questions with latest information.")
+            with st.expander("View Web Sources", expanded=False):
+                for src in sources:
+                    st.markdown(f"- [{src['title']}]({src['url']})")
+
         st.subheader("Results")
-        
+
         # We use a dummy test code for docx download
         render_review_interface(qs, "random_generated", 'random_questions')
