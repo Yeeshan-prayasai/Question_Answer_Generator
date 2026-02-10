@@ -1202,9 +1202,9 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
                 with meta_col2:
                     content_type_options = ["Not Set", "Static", "Current Affairs"]
 
-                    # Auto-default to "Static" if not already set
+                    # Auto-default based on whether web research was used
                     if not q.content_type:
-                        q.content_type = "Static"
+                        q.content_type = "Current Affairs" if st.session_state.get('research_sources') else "Static"
 
                     current_content_idx = 0
                     if q.content_type and q.content_type in content_type_options:
@@ -1414,8 +1414,39 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
 
     # Generate Unique Key Prefix for Widgets based on test_code
     # This prevents state collision when switching between tests that have same question IDs (numbers)
-    # If test_code contains spaces or special chars, clean it up? 
+    # If test_code contains spaces or special chars, clean it up?
     unique_prefix = f"{list_key}_{test_code}" if test_code else list_key
+
+    # Topic-wise tagging: copy tags from first selected question to all others
+    topicwise_key = f"{unique_prefix}_topicwise"
+    is_topicwise = st.checkbox("Topic-wise — apply tags from first question to all", key=topicwise_key)
+
+    if is_topicwise:
+        if st.button("Apply Q1 tags to all selected questions", key=f"{unique_prefix}_apply_tags"):
+            # Find the first question's tag state
+            first_q = questions[0]
+            first_tag_key = f"{unique_prefix}_tag_state_{first_q.db_uuid or first_q.id}"
+            if first_tag_key in st.session_state and st.session_state[first_tag_key]['subject']:
+                src = st.session_state[first_tag_key]
+                for q in questions[1:]:
+                    dest_key = f"{unique_prefix}_tag_state_{q.db_uuid or q.id}"
+                    if dest_key in st.session_state:
+                        st.session_state[dest_key]['subject'] = src['subject']
+                        st.session_state[dest_key]['topic'] = src['topic']
+                        st.session_state[dest_key]['subtopic'] = src['subtopic']
+                    else:
+                        st.session_state[dest_key] = {
+                            'subject': src['subject'],
+                            'topic': src['topic'],
+                            'subtopic': src['subtopic']
+                        }
+                    q.subject = src['subject'] or None
+                    q.topic = src['topic'] or None
+                    q.subtopic = src['subtopic'] or None
+                st.success(f"Applied tags ({src['subject']} / {src['topic']} / {src['subtopic']}) to all questions.")
+                st.rerun()
+            else:
+                st.warning("Please set tags on the first question (Q1) first, then click Apply.")
 
     # Question List
     # We must iterate by index for reordering callbacks
