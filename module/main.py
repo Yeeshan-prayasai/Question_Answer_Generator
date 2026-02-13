@@ -974,8 +974,17 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
 
             # Show correct answer
             st.markdown(f"**✓ Correct Answer: {q.answer}**")
-            
-            
+
+        # Explanation (editable)
+        with st.expander("Explanation", expanded=False):
+            new_explanation = st.text_area(
+                "Explanation",
+                q.explanation or "",
+                height=300,
+                key=f"{key_prefix}_explanation_{q.db_uuid or q.id}",
+                label_visibility="collapsed"
+            )
+            q.explanation = new_explanation if new_explanation.strip() else None
 
         st.divider()
 
@@ -1939,7 +1948,7 @@ if mode == "Prelims Test Series":
                             is_rejected = not is_selected if qd['quality_pass_flag'] is not None else False
                             
                             q_obj = Question(
-                                id=qd['question_number'], 
+                                id=qd['question_number'],
                                 db_uuid=str(qd['id']),
                                 question_number=qd['question_number'],
                                 question_english=qd['question_english'],
@@ -1949,6 +1958,8 @@ if mode == "Prelims Test Series":
                                 answer=qd['answer'],
                                 question_blueprint=qd['question_blueprint'],
                                 subject=qd['subject'],
+                                difficulty=qd.get('difficulty'),
+                                explanation=qd.get('explanation'),
                                 user_feedback=qd['quality_feedback'],
                                 is_selected=is_selected,
                                 is_rejected=is_rejected

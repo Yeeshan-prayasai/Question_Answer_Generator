@@ -268,6 +268,33 @@ This question requires EXACTLY 2 statements (I and II or 1 and 2). Include both 
 
 ### MANDATORY Constraint: Generate the question and options in such manner that answer is {ans}.
 
+### Explanation (MANDATORY FORMAT)
+Generate explanation in markdown with these exact sections (NO markdown heading syntax — use **bold** for headers):
+
+**Correct Answer: [Letter]**
+
+**Statement Analysis**
+1. **Statement 1:** ✓/✗ Correct/Incorrect — [10-15 word reason]
+(Number each statement 1, 2, 3 as per UPSC format)
+
+**Core Concept**
+[3-4 sentences, 60-80 words. Bold only exam-relevant terms like **Article 356**, **Wildlife Protection Act, 1972**, key personalities. Use cause-effect language.]
+
+**Logical Elimination and Educated Guesstimate**
+[Only if applicable. 2-3 sentences on elimination strategy.]
+
+**Key Points to Remember**
+
+- **Point 1:** [High-yield fact]
+  - [Sub-point]
+- **Point 2:** [Related insight]
+  - [Sub-point]
+- **Point 3:** [Current relevance]
+  - [Sub-point]
+
+**Why This Question?**
+[2-3 sentences on UPSC relevance, syllabus linkage, or current affairs connection.]
+
 ### Now generate question.
 '''
 

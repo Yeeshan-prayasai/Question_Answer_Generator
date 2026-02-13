@@ -128,10 +128,11 @@ class ArchivistAgent:
                             id, test_code, question_number, subject, topic, subtopic,
                             month, year, test_type,
                             prone_to_silly_mistakes, pattern, content_type,
+                            difficulty, explanation,
                             question_blueprint, question_hindi, options_hindi,
                             question_english, options_english,
                             answer, quality_pass_flag, quality_feedback
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (id) DO UPDATE SET
                             question_number = EXCLUDED.question_number,
                             subject = EXCLUDED.subject,
@@ -143,6 +144,8 @@ class ArchivistAgent:
                             prone_to_silly_mistakes = EXCLUDED.prone_to_silly_mistakes,
                             pattern = EXCLUDED.pattern,
                             content_type = EXCLUDED.content_type,
+                            difficulty = EXCLUDED.difficulty,
+                            explanation = EXCLUDED.explanation,
                             question_blueprint = EXCLUDED.question_blueprint,
                             question_hindi = EXCLUDED.question_hindi,
                             options_hindi = EXCLUDED.options_hindi,
@@ -155,6 +158,7 @@ class ArchivistAgent:
                         q_uuid, test_code, q.question_number, q.subject, q.topic, q.subtopic,
                         q.month, q.year, test_type,
                         q.prone_to_silly_mistakes, q.pattern, q.content_type,
+                        q.difficulty, q.explanation,
                         q.question_blueprint,
                         q.question_hindi, json.dumps(opts_hin, ensure_ascii=False),
                         q.question_english, json.dumps(opts_eng, ensure_ascii=False),

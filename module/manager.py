@@ -67,6 +67,15 @@ class QuestionManager:
             # Strip reference material from blueprint before storing (saves DB space)
             clean_blueprint = plan_text.split('\n\n--- REFERENCE MATERIAL')[0] if '--- REFERENCE MATERIAL' in plan_text else plan_text
 
+            # Extract difficulty from blueprint and map to 1-5 scale
+            difficulty = None
+            difficulty_map = {'Easy': 2.0, 'Moderate': 3.0, 'Difficult': 4.0}
+            for line in clean_blueprint.split('\n'):
+                if line.strip().startswith('Difficulty:'):
+                    raw_difficulty = line.strip().replace('Difficulty:', '').strip()
+                    difficulty = difficulty_map.get(raw_difficulty, 3.0)
+                    break
+
             que_hindi = None
             if que:
                 try:
@@ -87,8 +96,10 @@ class QuestionManager:
                     question_hindi=que_hindi.question,
                     options_hindi=que_hindi.options,
                     answer=que.answer,
+                    explanation=que.explanation if hasattr(que, 'explanation') else None,
                     question_blueprint=clean_blueprint,
                     subject=subject,
+                    difficulty=difficulty,
                     topic=None,  # Will be set during review/tagging
                     subtopic=None,  # Will be set during review/tagging
                     month=None,  # Will be set during review

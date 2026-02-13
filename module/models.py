@@ -18,8 +18,12 @@ class QuestionLLM(BaseModel):
         description="A list of exactly four multiple-choice options (A, B, C, D)."
     )
     answer: Literal["A", "B", "C", "D"] = Field(
-        ..., 
+        ...,
         description="The letter corresponding to the correct answer option."
+    )
+    explanation: str = Field(
+        ...,
+        description="A concise explanation (3-5 sentences) of why the correct answer is right and key distractors are wrong."
     )
 
 class QuestionLLMHindi(BaseModel):
@@ -68,6 +72,8 @@ class Question(BaseModel):
     test_type: Optional[str] = Field(None, description="Test Type: Comma-separated list of test types (Test Series, Daily Challenge, etc.)")
     prone_to_silly_mistakes: Optional[bool] = Field(None, description="Whether this question is prone to silly mistakes.")
     pattern: Optional[str] = Field(None, description="Question pattern/type.")
+    difficulty: Optional[float] = Field(None, description="Difficulty level on 1-5 scale (2=Easy, 3=Moderate, 4=Difficult).")
+    explanation: Optional[str] = Field(None, description="Explanation of the correct answer.")
     content_type: Optional[str] = Field(None, description="Content type: Static or Current Affairs.")
     user_feedback: Optional[str] = Field(None, description="User feedback/reason for selection/rejection.")
     is_selected: bool = Field(False, description="Whether the question is selected by the user.")
