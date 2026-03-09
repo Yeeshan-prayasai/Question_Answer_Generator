@@ -48,26 +48,35 @@ class PlannerAgent:
         return "\n".join(lines)
 
     def _generate_content(self, user_prompt, system_prompt, global_token_usage):
-        try:
-            resp = self.client.models.generate_content(
-                model=self.model,
-                contents=[user_prompt],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=65000,
-                    response_mime_type="application/json",
-                    response_schema=QuestionPlan, # Using QuestionPlan from models (wrapping List[str])
-                    system_instruction=system_prompt,
-                ),
-            )
-            
-            if hasattr(resp, 'usage_metadata'):
-                global_token_usage.append(resp.usage_metadata)
-
-            return resp.parsed
-        except Exception as e:
-            print(f"Error in PlannerAgent: {e}")
-            return None
+        fallback_models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+        models_to_try = [self.model] + [m for m in fallback_models if m != self.model]
+        for model in models_to_try:
+            try:
+                resp = self.client.models.generate_content(
+                    model=model,
+                    contents=[user_prompt],
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        max_output_tokens=65000,
+                        response_mime_type="application/json",
+                        response_schema=QuestionPlan,
+                        system_instruction=system_prompt,
+                    ),
+                )
+                if hasattr(resp, 'usage_metadata'):
+                    global_token_usage.append(resp.usage_metadata)
+                if model != self.model:
+                    print(f"[PlannerAgent] Used fallback model: {model}")
+                return resp.parsed
+            except Exception as e:
+                print(f"Error in PlannerAgent ({model}): {e}")
+                if "503" in str(e) or "UNAVAILABLE" in str(e):
+                    print(f"[PlannerAgent] {model} unavailable, trying next...")
+                    time.sleep(2)
+                    continue
+                return None
+        print("[PlannerAgent] All models failed.")
+        return None
 
     def _format_requirements(self, distribution):
         req_str = "### Detailed Question Requirements Table:\n"
