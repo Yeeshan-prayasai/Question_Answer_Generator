@@ -3,20 +3,23 @@ import time
 try:
     from .models import QuestionPlan
     from .utils import load_prompt_file
-    from .archivist import ArchivistAgent
 except ImportError:
     from models import QuestionPlan
     from utils import load_prompt_file
-    from archivist import ArchivistAgent
 
 class PlannerAgent:
     def __init__(self, client):
         self.client = client
         # self.model = "gemini-2.5-pro"
         self.model = "gemini-3-pro-preview"
-        
+
         # Load static prompt content
         self.planner_guidelines = load_prompt_file('planner_guidelines.txt')
+        # Deferred import to avoid circular dependency (archivist → manager → planner → archivist)
+        try:
+            from .archivist import ArchivistAgent
+        except ImportError:
+            from archivist import ArchivistAgent
         self.archivist = ArchivistAgent()
         self.past_blueprints = self.archivist.get_all_questions()
         # Load taxonomy names so the planner uses exact DB names
