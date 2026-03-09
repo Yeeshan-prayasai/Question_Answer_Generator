@@ -6,7 +6,6 @@ import psycopg2
 import psycopg2.extras
 from typing import List, Optional
 from dotenv import load_dotenv
-load_dotenv()
 import streamlit as st
 
 try:
@@ -19,52 +18,71 @@ root_dir = os.path.dirname(current_dir)
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 env_path = os.path.join(root_dir, '.env')
-if os.path.exists(env_path):
-    load_dotenv(env_path)
-
-# DB_CONFIG = {
-#     "host": st.secrets["host"],
-#     "database": st.secrets["database"],
-#     "user": st.secrets["user"],
-#     "password": st.secrets["password"],
-#     "port": st.secrets["port"]
-# }
-
-DB_CONFIG = {
-    "host": os.getenv("host"),
-    "database": os.getenv("database"),
-    "user": os.getenv("user"),
-    "password": os.getenv("password"),
-    "port": os.getenv("port")
-}
+load_dotenv(env_path)
 
 SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000"
 
+def _get_upsc_db_config():
+    """Get UPSC DB config from st.secrets (Community Cloud) or .env (local)."""
+    def _s(key):
+        try:
+            return st.secrets.get(key) or os.getenv(key)
+        except Exception:
+            return os.getenv(key)
+    return {
+        "host": _s("host"),
+        "database": _s("database"),
+        "user": _s("user"),
+        "password": _s("password"),
+        "port": _s("port"),
+    }
+
 def _get_app_db_configs():
+    def _s(key):
+        try:
+            return st.secrets.get(key) or os.getenv(key)
+        except Exception:
+            return os.getenv(key)
     return {
         "dev": {
-            "host": st.secrets.get("app_dev_DB_HOST"),
-            "database": st.secrets.get("app_dev_DB_NAME"),
-            "user": st.secrets.get("app_DB_USERNAME"),
-            "password": st.secrets.get("app_dev_DB_PASSWORD"),
-            "port": st.secrets.get("app_dev_DB_PORT"),
+            "host": _s("app_dev_DB_HOST"),
+            "database": _s("app_dev_DB_NAME"),
+            "user": _s("app_DB_USERNAME"),
+            "password": _s("app_dev_DB_PASSWORD"),
+            "port": _s("app_dev_DB_PORT"),
         },
         "prod": {
-            "host": st.secrets.get("app_prod_DB_HOST"),
-            "database": st.secrets.get("app_prod_DB_NAME"),
-            "user": st.secrets.get("app_prod_DB_USERNAME"),
-            "password": st.secrets.get("app_prod_DB_PASSWORD"),
-            "port": st.secrets.get("app_prod_DB_PORT"),
+            "host": _s("app_prod_DB_HOST"),
+            "database": _s("app_prod_DB_NAME"),
+            "user": _s("app_prod_DB_USERNAME"),
+            "password": _s("app_prod_DB_PASSWORD"),
+            "port": _s("app_prod_DB_PORT"),
         },
     }
 
-try:
-    conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-except Exception as e:
-    print(f"Database connection error: {e}")
-    conn = None
-    cur = None
+# Lazy connection — established on first use, not at import time
+conn = None
+cur = None
+
+def _ensure_upsc_conn():
+    """Lazily connect to UPSC DB. Returns (conn, cur) or (None, None) on failure."""
+    global conn, cur
+    if conn is not None:
+        try:
+            conn.isolation_level  # ping — raises if connection is dead
+            return conn, cur
+        except Exception:
+            conn = None
+            cur = None
+    try:
+        cfg = _get_upsc_db_config()
+        conn = psycopg2.connect(**cfg)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+    except Exception as e:
+        print(f"Database connection error: {e}")
+        conn = None
+        cur = None
+    return conn, cur
 
 _SECTION_NAME_MAP = {
     "statement analysis": "Statement Analysis",
@@ -160,7 +178,7 @@ class ArchivistAgent:
         global conn, cur
         if conn is None or conn.closed:
              try:
-                conn = psycopg2.connect(**DB_CONFIG)
+                conn = psycopg2.connect(**_get_upsc_db_config())
                 cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
              except Exception as e:
                  print(f"Reconnect error: {e}")

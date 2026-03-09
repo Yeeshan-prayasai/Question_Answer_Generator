@@ -10,19 +10,37 @@ from typing import List, Optional, Any, Tuple
 
 try:
     from .planner import PlannerAgent
-    from .generator import GeneratorAgent
-    from .translator import TranslatorAgent
-    from .archivist import ArchivistAgent
-    from .researcher import ResearcherAgent
-    from .models import Question, TestPaper
-    from .utils import calculate_total_usage
 except (ImportError, KeyError):
     from planner import PlannerAgent
+
+try:
+    from .generator import GeneratorAgent
+except (ImportError, KeyError):
     from generator import GeneratorAgent
+
+try:
+    from .translator import TranslatorAgent
+except (ImportError, KeyError):
     from translator import TranslatorAgent
+
+try:
+    from .archivist import ArchivistAgent
+except (ImportError, KeyError):
     from archivist import ArchivistAgent
+
+try:
+    from .researcher import ResearcherAgent
+except (ImportError, KeyError):
     from researcher import ResearcherAgent
+
+try:
+    from .models import Question, TestPaper
+except (ImportError, KeyError):
     from models import Question, TestPaper
+
+try:
+    from .utils import calculate_total_usage
+except (ImportError, KeyError):
     from utils import calculate_total_usage
 
 class QuestionManager:
