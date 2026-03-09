@@ -109,10 +109,11 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 1. Content Selection
    - You need to FOCUS on USER PROVIDED TOPIC while analyzing CONTEXT.
    - You need to Identify underlying conceptual topics/subtopics from the CONTEXT but ONLY from the LENS of USER PROVIDED TOPIC.
-   - You need to Ensure every question connects directly to that CONTEXT (conceptually or factually) but ONLY from the LENS of USER PROVIDED TOPIC. 
+   - You need to Ensure every question connects directly to that CONTEXT (conceptually or factually) but ONLY from the LENS of USER PROVIDED TOPIC.
    - Do Not try to cover everything in 1 question. Take points from context and Make blueprints.
+   - **Source Passage (MANDATORY when Context is provided):** For each blueprint, copy the exact sentence(s) or bullet point(s) from the Context that the question is based on. Put this verbatim text under the `Source Passage:` field.
 
-2. **Adhere strictly to the Detailed Requirements Table:** 
+2. **Adhere strictly to the Detailed Requirements Table:**
    - You MUST generate exactly the number of questions requested for each row in the table.
    - You MUST match the specified Pattern, Cognitive Level, and Difficulty for each question.
    - If a specific Topic is provided in the row, use it. If not, use the Main Topic/Context.
@@ -120,6 +121,13 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 3. AVOID REPETITION
    - Analyze past generated blueprints and avoid repetition.
    - Atleast vary sub-subtopic and pattern in that subtopic. [Mandatory]
+
+4. DISTRIBUTED COVERAGE ACROSS DOCUMENT [CRITICAL]
+   - The Context is divided into numbered SECTIONS (=== SECTION X of N ===).
+   - You MUST spread questions across ALL sections — assign each blueprint a Source Passage from a DIFFERENT section.
+   - Do NOT draw multiple questions from SECTION 1 or any single section if other sections are unused.
+   - Work through sections in order: blueprint 1 from Section 1, blueprint 2 from Section 2, and so on.
+   - This ensures questions cover the full document, not just the beginning.
 
 ---
 
@@ -164,6 +172,7 @@ Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
 Format: Standard Single-Incorrect
+Source Passage: [copy the exact sentence(s) or bullet point(s) from the provided Context that this question is based on — verbatim, max 3 sentences]
 Note: Focus on temple architecture and social conditions under Vijayanagara rulers."
 ]
 
@@ -248,10 +257,11 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 1. Content Selection
    - You need to FOCUS on USER PROVIDED CONTEXT only for blueprints.
    - You need to Identify underlying conceptual topics/subtopics from the CONTEXT.
-   - You need to Ensure every question connects directly to that CONTEXT (conceptually or factually). 
+   - You need to Ensure every question connects directly to that CONTEXT (conceptually or factually).
    - Do Not try to cover everything in 1 question. Take points from context and Make blueprints.
+   - **Source Passage (MANDATORY):** For each blueprint, copy the exact sentence(s) or bullet point(s) from the Context that the question is based on. Put this verbatim text under the `Source Passage:` field.
 
-2. **Adhere strictly to the Detailed Requirements Table:** 
+2. **Adhere strictly to the Detailed Requirements Table:**
    - You MUST generate exactly the number of questions requested for each row in the table.
    - You MUST match the specified Pattern, Cognitive Level, and Difficulty for each question.
    - If a specific Topic is provided in the row, use it. If not, use the Main Context.
@@ -259,6 +269,13 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 3. AVOID REPETITION
    - Analyze past generated blueprints and avoid repetition.
    - Atleast vary sub-subtopic and pattern in that subtopic. [Mandatory]
+
+4. DISTRIBUTED COVERAGE ACROSS DOCUMENT [CRITICAL]
+   - The Context is divided into numbered SECTIONS (=== SECTION X of N ===).
+   - You MUST spread questions across ALL sections — assign each blueprint a Source Passage from a DIFFERENT section.
+   - Do NOT draw multiple questions from SECTION 1 or any single section if other sections are unused.
+   - Work through sections in order: blueprint 1 from Section 1, blueprint 2 from Section 2, and so on.
+   - This ensures questions cover the full document, not just the beginning.
 
 ---
 
@@ -303,6 +320,7 @@ Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
 Format: Standard Single-Incorrect
+Source Passage: [copy the exact sentence(s) or bullet point(s) from the provided Context that this question is based on — verbatim, max 3 sentences]
 Note: Focus on temple architecture and social conditions under Vijayanagara rulers."
 ]
 
@@ -435,6 +453,7 @@ Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
 Format: Standard Single-Incorrect
+Source Passage: [copy the exact sentence(s) or bullet point(s) from the provided Context that this question is based on — verbatim, max 3 sentences]
 Note: Focus on temple architecture and social conditions under Vijayanagara rulers."
 ]
 
@@ -579,6 +598,7 @@ Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
 Format: Standard Single-Incorrect
+Source Passage: [copy the exact sentence(s) or bullet point(s) from the provided Context that this question is based on — verbatim, max 3 sentences]
 Note: Focus on temple architecture and social conditions under Vijayanagara rulers."
 ]
 

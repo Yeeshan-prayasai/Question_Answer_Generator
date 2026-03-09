@@ -356,6 +356,88 @@ def regenerate_callback(q, key_prefix, custom_blueprint=None):
     except Exception as e:
         print(f"Regeneration callback error: {e}")
 
+
+def regenerate_explanation_callback(q, key_prefix):
+    """Regenerate explanation for a question using Gemini AI."""
+    try:
+        from google import genai
+        from google.genai import types
+
+        api_key = st.secrets.get("api_key") or os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            st.error("No API key found for explanation generation.")
+            return
+
+        client = genai.Client(api_key=api_key)
+
+        SYSTEM_INSTRUCTION = """You are an expert UPSC Prelims explanation writer. Generate concise, exam-oriented explanations in English with consistent markdown formatting.
+
+## DYNAMIC KNOWLEDGE PROTOCOL
+- **Temporal Awareness:** You are an expert analyst operating in real-time. Always evaluate if a concept is current, legacy, or newly updated.
+- **Verification First:** Before drafting an explanation, check for the latest government notifications, law amendments, or data releases.
+- **Adaptive Nomenclature:** If a scheme has been rebranded or replaced, prioritize the most recent official version.
+
+## OUTPUT FORMAT
+Return ONLY the markdown explanation (English only, no JSON wrapper). Use these exact sections IN THIS ORDER with BLANK LINES between sections:
+
+1. **Correct Answer: [Letter]** (at the very top, bold)
+2. **Statement Analysis** (bold text, normal size)
+3. **Core Concept** (bold text, normal size, 60-80 words)
+4. **Logical Elimination and Educated Guesstimate** (only when applicable)
+5. **Key Points to Remember** (bold text, normal size)
+6. **Why This Question?** (bold text, normal size)
+
+## MARKDOWN FORMATTING RULES
+
+### Use These:
+- **bold** for section headers (NO markdown heading syntax — no #, ##, or ###)
+- **bold** for exam-relevant keywords in Core Concept (technical terms, acts, articles, years, personalities)
+- ✓ for correct statements | ✗ for incorrect statements
+- NUMBERED statements (1, 2, 3) as per official UPSC format (MANDATORY)
+- `-` (dash with space) for main bullet points
+- `  -` (two spaces + dash) for sub-bullets under main points
+- Blank line before and after Key Points section for readability
+
+### Don't Use:
+- NO markdown heading syntax (#, ##, ###) — use bold text instead
+- NO code blocks with ```
+- NO alphabetical labeling (a, b, c) — use numbers (1, 2, 3) for statements
+- NO generic bolding ("important", "significant") — only bold exam-relevant terms"""
+
+        opts = q.options_english
+        options_text = "\n".join(f"({chr(65+i)}) {opt}" for i, opt in enumerate(opts))
+        prompt = (
+            f"Generate a detailed UPSC Prelims explanation for this question.\n\n"
+            f"**Question:**\n{q.question_english}\n\n"
+            f"**Options:**\n{options_text}\n\n"
+            f"**Correct Answer: {q.answer}**\n\n"
+            f"Follow the system instructions exactly. Output markdown only (English only, no JSON)."
+        )
+
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[prompt],
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.1,
+                max_output_tokens=2000,
+            ),
+        )
+
+        new_explanation = resp.text.strip() if resp.text else ""
+        if new_explanation:
+            q.explanation = new_explanation
+            unique_id = q.db_uuid or q.id
+            exp_key = f"{key_prefix}_explanation_{unique_id}"
+            if exp_key in st.session_state:
+                st.session_state[exp_key] = new_explanation
+        else:
+            st.warning("Explanation generation returned empty result.")
+    except Exception as e:
+        st.error(f"Explanation generation error: {e}")
+        print(f"Explanation generation error: {e}")
+
+
 # --- Helper Functions ---
 
 def auto_distribute_empty_fields(config_list):
@@ -915,6 +997,29 @@ def parse_blueprint(uploaded_file):
         st.error(f"Error parsing blueprint: {e}")
     return text
 
+def _extract_source_passage_from_blueprint(blueprint: str):
+    """Extract the Source Passage field from a question blueprint string."""
+    if not blueprint:
+        return None
+    in_passage = False
+    passage_lines = []
+    for line in blueprint.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('Source Passage:'):
+            passage_val = stripped.replace('Source Passage:', '').strip()
+            # Filter out placeholder/template text
+            if passage_val and not passage_val.startswith('[copy') and passage_val not in ('N/A', ''):
+                passage_lines = [passage_val]
+            in_passage = True
+        elif in_passage:
+            if ':' in stripped and stripped.split(':')[0].replace(' ', '').isalpha() and len(stripped.split(':')[0]) < 25:
+                in_passage = False
+            else:
+                if stripped and not stripped.startswith('[copy'):
+                    passage_lines.append(stripped)
+    return ' '.join(passage_lines).strip() or None
+
+
 def render_question_editor(q, index, total_questions, list_key, key_prefix):
     """
     Renders a single question editor block.
@@ -928,6 +1033,18 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
         with col_top:
             # Always show dynamic number based on index
             st.markdown(f"#### Q{index+1} (ID: {q.id})")
+            _pdf_source = getattr(q, 'pdf_source', None)
+            _source_passage = getattr(q, 'source_passage', None)
+            # Fallback: extract from blueprint if not set
+            if not _source_passage:
+                _source_passage = _extract_source_passage_from_blueprint(getattr(q, 'question_blueprint', None))
+            if _pdf_source or _source_passage:
+                label = _pdf_source or "Source document"
+                if _source_passage:
+                    with st.expander(f"📄 {label}", expanded=True):
+                        st.markdown(f"*{_source_passage}*")
+                else:
+                    st.caption(f"📄 {label}")
         with col_act:
             # Reorder Buttons
             c_up, c_down = st.columns(2)
@@ -977,6 +1094,15 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
 
         # Explanation (editable)
         with st.expander("Explanation", expanded=False):
+            exp_col1, exp_col2 = st.columns([5, 1])
+            with exp_col2:
+                st.button(
+                    "🔄 Regenerate",
+                    key=f"{key_prefix}_regen_exp_{q.db_uuid or q.id}",
+                    on_click=regenerate_explanation_callback,
+                    args=(q, key_prefix),
+                    help="Regenerate explanation using AI (uses current answer)"
+                )
             new_explanation = st.text_area(
                 "Explanation",
                 q.explanation or "",
@@ -1034,30 +1160,16 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
             expander_state_key = f"{key_prefix}_expander_state_{q.db_uuid or q.id}"
 
             if tag_state_key not in st.session_state:
-                # Auto-tag from blueprint if available
-                blueprint_metadata = parse_blueprint(q.question_blueprint) if q.question_blueprint else {}
-                blueprint_topic = blueprint_metadata.get("topic", "")
-                blueprint_subtopic = blueprint_metadata.get("subtopic", "")
-
-                # Try to match blueprint topic/subtopic with syllabus
-                auto_subject = q.subject or ''
-                auto_topic = q.topic or ''
-                auto_subtopic = q.subtopic or ''
-
-                # If not already tagged, try to auto-match from blueprint
-                if not auto_subject and blueprint_topic:
-                    # Search syllabus for matching topic
-                    for subj, topics_dict in syllabus_csv.items():
-                        if blueprint_topic in topics_dict:
-                            auto_subject = subj
-                            auto_topic = blueprint_topic
-                            # Try to find subtopic
-                            if blueprint_subtopic:
-                                for subtopic_obj in topics_dict[blueprint_topic]:
-                                    if subtopic_obj['subtopic'] == blueprint_subtopic:
-                                        auto_subtopic = blueprint_subtopic
-                                        break
-                            break
+                # Use already-set tags if available, otherwise auto-detect from blueprint
+                if q.subject and q.topic and q.subtopic:
+                    auto_subject = q.subject
+                    auto_topic = q.topic
+                    auto_subtopic = q.subtopic
+                else:
+                    tags = auto_tag_from_blueprint(q.question_blueprint or "")
+                    auto_subject = tags['subject'] or q.subject or ''
+                    auto_topic = tags['topic'] or q.topic or ''
+                    auto_subtopic = tags['subtopic'] or q.subtopic or ''
 
                 st.session_state[tag_state_key] = {
                     'subject': auto_subject,
@@ -1297,6 +1409,84 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
     # Add separator between questions
     st.markdown("---")
 
+# Planner subject names → CSV subject names
+_SUBJECT_MAP = {
+    "history & culture": "History",
+    "history": "History",
+    "geography": "Geography",
+    "polity & governance": "Polity",
+    "polity": "Polity",
+    "economy": "Economy",
+    "environment": "Environment",
+    "science & technology": "Science & Tech",
+    "science and technology": "Science & Tech",
+    "ca & ir": "Current Affairs",
+    "current affairs": "Current Affairs",
+    "miscellaneous": "Miscellaneous",
+}
+
+def auto_tag_from_blueprint(blueprint_text: str) -> dict:
+    """
+    Returns {'subject': ..., 'topic': ..., 'subtopic': ...} by mapping
+    the blueprint's Subject/Topic/Subtopic fields onto syllabus_csv entries
+    using exact subject mapping + difflib fuzzy matching for topic/subtopic.
+    Returns empty strings for fields that can't be matched.
+    """
+    import difflib
+    meta = parse_blueprint(blueprint_text)
+
+    # --- Subject mapping ---
+    raw_subject = ""
+    for line in (blueprint_text or "").split('\n'):
+        if line.strip().startswith("Subject:"):
+            raw_subject = line.strip().replace("Subject:", "").strip()
+            break
+    csv_subject = _SUBJECT_MAP.get(raw_subject.lower(), "")
+    if not csv_subject:
+        # Fallback: try partial match
+        for key, val in _SUBJECT_MAP.items():
+            if key in raw_subject.lower() or raw_subject.lower() in key:
+                csv_subject = val
+                break
+    if not csv_subject or csv_subject not in syllabus_csv:
+        return {'subject': '', 'topic': '', 'subtopic': ''}
+
+    # --- Topic fuzzy match ---
+    bp_topic = meta.get("topic", "")
+    available_topics = list(syllabus_csv[csv_subject].keys())
+    csv_topic = ""
+    if bp_topic and bp_topic != "N/A":
+        matches = difflib.get_close_matches(bp_topic, available_topics, n=1, cutoff=0.3)
+        if matches:
+            csv_topic = matches[0]
+        else:
+            # Try substring match
+            bp_lower = bp_topic.lower()
+            for t in available_topics:
+                if bp_lower in t.lower() or t.lower() in bp_lower:
+                    csv_topic = t
+                    break
+
+    if not csv_topic:
+        return {'subject': csv_subject, 'topic': '', 'subtopic': ''}
+
+    # --- Subtopic fuzzy match ---
+    bp_subtopic = meta.get("subtopic", "")
+    available_subtopics = [s['subtopic'] for s in syllabus_csv[csv_subject][csv_topic]]
+    csv_subtopic = ""
+    if bp_subtopic and bp_subtopic != "N/A":
+        matches = difflib.get_close_matches(bp_subtopic, available_subtopics, n=1, cutoff=0.3)
+        if matches:
+            csv_subtopic = matches[0]
+        else:
+            bp_lower = bp_subtopic.lower()
+            for s in available_subtopics:
+                if bp_lower in s.lower() or s.lower() in bp_lower:
+                    csv_subtopic = s
+                    break
+
+    return {'subject': csv_subject, 'topic': csv_topic, 'subtopic': csv_subtopic}
+
 def parse_blueprint(blueprint_text):
     """Extract metadata from blueprint text"""
     if not blueprint_text:
@@ -1319,6 +1509,465 @@ def parse_blueprint(blueprint_text):
             metadata["difficulty"] = line.replace("Difficulty:", "").strip()
 
     return metadata
+
+def _load_questions_from_upsc_db(test_type: str):
+    """Load questions for a test_type from upsc dev, deduplicating by upsc question UUID (db_uuid = mcqs.id)."""
+    raw_qs = manager.archivist.get_questions_by_test_type(test_type)
+    loaded_qs = []
+    seen_uuids = set()
+    for qd in raw_qs:
+        uid = str(qd['id'])
+        if uid in seen_uuids:
+            continue
+        seen_uuids.add(uid)
+        try:
+            opt_eng = qd['options_english']
+            opt_hin = qd['options_hindi']
+            opt_eng_list = [opt_eng.get(k, "") for k in ['a', 'b', 'c', 'd']] if isinstance(opt_eng, dict) else list(opt_eng)
+            opt_hin_list = [opt_hin.get(k, "") for k in ['a', 'b', 'c', 'd']] if isinstance(opt_hin, dict) else list(opt_hin)
+            _blueprint = qd.get('question_blueprint')
+            q_obj = Question(
+                id=qd['question_number'],
+                db_uuid=uid,
+                question_number=qd['question_number'],
+                question_english=qd['question_english'],
+                options_english=opt_eng_list,
+                question_hindi=qd['question_hindi'],
+                options_hindi=opt_hin_list,
+                answer=qd['answer'],
+                question_blueprint=_blueprint,
+                source_passage=_extract_source_passage_from_blueprint(_blueprint),
+                subject=qd.get('subject'),
+                topic=qd.get('topic'),
+                subtopic=qd.get('subtopic'),
+                test_type=qd.get('test_type'),
+                pattern=qd.get('pattern'),
+                content_type=qd.get('content_type'),
+                difficulty=qd.get('difficulty'),
+                explanation=qd.get('explanation'),
+                prone_to_silly_mistakes=qd.get('prone_to_silly_mistakes'),
+                month=qd.get('month'),
+                year=qd.get('year'),
+                user_feedback=qd.get('quality_feedback'),
+                is_selected=bool(qd.get('quality_pass_flag')),
+                is_rejected=not bool(qd.get('quality_pass_flag')) if qd.get('quality_pass_flag') is not None else False,
+            )
+            loaded_qs.append(q_obj)
+        except Exception as e:
+            print(f"_load_questions_from_upsc_db parse error: {e}")
+    return loaded_qs
+
+
+def render_review_approve():
+    """Review & Approve page: load saved questions by test type, edit, and push new ones to prod."""
+    try:
+        from module.archivist import _markdown_to_app_explanation
+    except ImportError:
+        from archivist import _markdown_to_app_explanation
+
+    st.header("Review & Approve for Production")
+    st.caption(
+        "Select a test type to review questions saved in UPSC Dev + App Dev. "
+        "Questions already in App Prod are shown as read-only. "
+        "Approve new questions and push them to prod."
+    )
+
+    test_types = manager.archivist.get_unique_test_types()
+    if not test_types:
+        st.info("No questions found in UPSC Dev database.")
+        return
+
+    ra_type = st.selectbox("Select Test Type", ['-- select --'] + test_types, key="ra_test_type_sel")
+    if ra_type == '-- select --':
+        return
+
+    def _do_load(sel_type):
+        qs = _load_questions_from_upsc_db(sel_type)
+        questions_map = [
+            {'uuid': q.db_uuid, 'text': q.question_english}
+            for q in qs if q.db_uuid
+        ]
+        prod_combined = manager.archivist.get_prod_existing_combined(questions_map)
+        return qs, prod_combined
+
+    # Load / refresh questions
+    if st.session_state.get('ra_current_type') != ra_type:
+        questions, prod_uuids = _do_load(ra_type)
+        st.session_state['ra_questions'] = questions
+        st.session_state['ra_current_type'] = ra_type
+        st.session_state['ra_prod_uuids'] = prod_uuids
+        st.session_state['ra_approved'] = set()
+
+    if st.button("🔄 Refresh from DB", key="ra_refresh"):
+        questions, prod_uuids = _do_load(ra_type)
+        st.session_state['ra_questions'] = questions
+        st.session_state['ra_prod_uuids'] = prod_uuids
+        st.session_state['ra_approved'] = set()
+        st.rerun()
+
+    questions = st.session_state.get('ra_questions', [])
+    if not questions:
+        st.info("No questions found for this test type.")
+        return
+
+    prod_uuids: set = st.session_state.get('ra_prod_uuids', set())
+    approved_uuids: set = st.session_state.get('ra_approved', set())
+
+    # New = not yet in prod
+    new_questions = [q for q in questions if q.db_uuid not in prod_uuids]
+
+    # --- Stats ---
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1.metric("Total", len(questions))
+    col_s2.metric("✅ Already in Prod", len(prod_uuids))
+    col_s3.metric("🆕 New (not in prod)", len(new_questions))
+    col_s4.metric("☑️ Approved", len(approved_uuids))
+
+    st.divider()
+
+    # --- Bulk Actions ---
+    ba1, ba2, ba3 = st.columns(3)
+    with ba1:
+        if st.button("✅ Approve All New Questions"):
+            st.session_state['ra_approved'] = {q.db_uuid for q in new_questions if q.db_uuid}
+            st.rerun()
+    with ba2:
+        if st.button("💾 Save All Changes to DBs"):
+            saved_count = 0
+            for q in questions:
+                if not q.db_uuid:
+                    continue
+                updates = {
+                    'question_english': q.question_english,
+                    'question_hindi': q.question_hindi,
+                    'answer': q.answer.upper(),
+                    'subject': q.subject,
+                    'topic': q.topic,
+                    'subtopic': q.subtopic,
+                    'test_type': q.test_type,
+                    'pattern': q.pattern,
+                    'content_type': q.content_type,
+                    'difficulty': q.difficulty,
+                    'explanation': q.explanation,
+                    'prone_to_silly_mistakes': q.prone_to_silly_mistakes,
+                    'month': q.month,
+                    'year': q.year,
+                }
+                if manager.archivist.update_upsc_question(q.db_uuid, updates):
+                    saved_count += 1
+            manager.archivist._sync_to_app_databases(questions, ['dev'])
+            st.success(f"✅ Saved {saved_count}/{len(questions)} questions to UPSC Dev and re-synced to App Dev.")
+    with ba3:
+        approved_questions = [q for q in questions if q.db_uuid in approved_uuids]
+        if approved_questions:
+            if st.button(f"🚀 Push {len(approved_questions)} Approved to App Prod", type="primary"):
+                issues = []
+                for q in approved_questions:
+                    if not (q.subject and q.topic and q.subtopic):
+                        issues.append(f"Q{q.question_number}: Missing subject/topic/subtopic")
+                    if not q.explanation:
+                        issues.append(f"Q{q.question_number}: Missing explanation")
+                    if not q.pattern:
+                        issues.append(f"Q{q.question_number}: Missing pattern")
+                    if not q.content_type:
+                        issues.append(f"Q{q.question_number}: Missing content type")
+                if issues:
+                    st.error("Fix these before pushing to prod:\n" + "\n".join(issues[:8]))
+                else:
+                    if manager.archivist.push_to_prod(approved_questions):
+                        st.success(f"🎉 Successfully pushed {len(approved_questions)} questions to App Prod!")
+                        # Refresh prod status
+                        _, new_prod = _do_load(ra_type)
+                        st.session_state['ra_prod_uuids'] = new_prod
+                        st.session_state['ra_approved'] = set()
+                        st.rerun()
+                    else:
+                        st.error("Failed to push to prod.")
+        else:
+            st.info("Approve new questions first, then push to prod.")
+
+    st.divider()
+
+    # --- Filter toggle ---
+    show_prod = st.checkbox("Show questions already in prod", value=False, key="ra_show_prod")
+    display_questions = questions if show_prod else new_questions
+
+    if not display_questions:
+        if new_questions:
+            st.info("All questions in this test type are already in prod.")
+        else:
+            st.info("No questions to show.")
+        return
+
+    # --- Pattern options (reused below) ---
+    _PATTERN_OPTS = [
+        "Not Set", "Standard Single-Correct", "Standard Single-Incorrect",
+        "Multiple-Statement-2 (Correct)", "Multiple-Statement-3 (Correct)",
+        "Multiple-Statement-4 (Correct)", "Multiple-Statement-2 (Incorrect)",
+        "Multiple-Statement-3 (Incorrect)", "Multiple-Statement-4 (Incorrect)",
+        "How Many - Statement", "How Many Pairs Correct/Incorrect", "How Many Sets/Triplets",
+        "Std 2-Stmt Assertion-Reason", "Complex 3-Stmt Assertion-Reason",
+        "Chronological Ordering", "Geographical Sequencing",
+    ]
+
+    # --- Per-question cards ---
+    for i, q in enumerate(display_questions):
+        uid = q.db_uuid or str(q.id)
+        in_prod = uid in prod_uuids
+        is_approved = uid in approved_uuids
+
+        if in_prod:
+            status_icon = "🟢"
+            prod_label = " [IN PROD]"
+        elif is_approved:
+            status_icon = "✅"
+            prod_label = " [APPROVED]"
+        else:
+            status_icon = "⏳"
+            prod_label = ""
+
+        tags_summary = f"{q.subject or '?'} › {q.topic or '?'} › {q.subtopic or '?'}"
+        card_label = f"{status_icon} #{i+1}{prod_label} — {tags_summary}"
+
+        with st.expander(card_label, expanded=False):
+            # Already-in-prod badge
+            if in_prod:
+                st.info("🟢 This question is already in App Prod (matched by UUID or question text). Editing here updates UPSC Dev + App Dev only.")
+
+            # Approve toggle + quick info
+            apr_col, info_col = st.columns([1, 3])
+            with apr_col:
+                if not in_prod:
+                    approved_toggle = st.checkbox(
+                        "Approve for Prod", value=is_approved, key=f"ra_approve_{uid}"
+                    )
+                    if approved_toggle:
+                        approved_uuids.add(uid)
+                    else:
+                        approved_uuids.discard(uid)
+                    st.session_state['ra_approved'] = approved_uuids
+                else:
+                    st.markdown("🟢 **In Prod**")
+
+            with info_col:
+                st.caption(
+                    f"Pattern: **{q.pattern or 'Not Set'}** | "
+                    f"Content: **{q.content_type or 'Not Set'}** | "
+                    f"Difficulty: **{q.difficulty or 'Not Set'}** | "
+                    f"Test Type: **{q.test_type or 'Not Set'}**"
+                )
+
+            # Validation indicators (only flag for new questions)
+            if not in_prod:
+                missing = []
+                if not (q.subject and q.topic and q.subtopic):
+                    missing.append("Tags")
+                if not q.explanation:
+                    missing.append("Explanation")
+                if not q.pattern:
+                    missing.append("Pattern")
+                if not q.content_type:
+                    missing.append("Content Type")
+                if missing:
+                    st.warning(f"Missing: {', '.join(missing)}")
+
+            st.divider()
+
+            # --- Question Content Editor ---
+            with st.expander("✏️ Edit Question Content", expanded=False):
+                q_col1, q_col2 = st.columns(2)
+                with q_col1:
+                    st.caption("English (Editable)")
+                    new_q_eng = st.text_area("Question", q.question_english, height=180, key=f"ra_qe_{uid}")
+                    new_opts = []
+                    for j, opt in enumerate(q.options_english):
+                        new_opt = st.text_input(f"Option {chr(65+j)}", opt, key=f"ra_opt_{uid}_{j}")
+                        new_opts.append(new_opt)
+                    new_ans = st.selectbox(
+                        "✓ Correct Answer", ['A', 'B', 'C', 'D'],
+                        index=['A', 'B', 'C', 'D'].index(q.answer),
+                        key=f"ra_ans_{uid}"
+                    )
+                    q.question_english = new_q_eng
+                    q.options_english = new_opts
+                    q.answer = new_ans
+
+                with q_col2:
+                    st.caption("Hindi (Read-Only)")
+                    st.text_area("Question", q.question_hindi, height=180, disabled=True, key=f"ra_qh_{uid}")
+                    for j, opt in enumerate(q.options_hindi):
+                        st.text_input(f"विकल्प {chr(65+j)}", opt, disabled=True, key=f"ra_oph_{uid}_{j}")
+                    st.markdown(f"**✓ Correct Answer: {q.answer}**")
+
+            # --- Explanation — dual format ---
+            st.markdown("**Explanation**")
+            exp_tab_raw, exp_tab_app = st.tabs(["📝 Raw Markdown (UPSC DB)", "📊 App Format Preview"])
+
+            with exp_tab_raw:
+                regen_c, _ = st.columns([1, 5])
+                with regen_c:
+                    st.button(
+                        "🔄 Regenerate",
+                        key=f"ra_regen_{uid}",
+                        on_click=regenerate_explanation_callback,
+                        args=(q, "ra"),
+                    )
+                new_exp = st.text_area(
+                    "Explanation (Raw Markdown)",
+                    q.explanation or "",
+                    height=350,
+                    key=f"ra_explanation_{uid}",
+                    label_visibility="collapsed",
+                )
+                q.explanation = new_exp.strip() if new_exp.strip() else None
+
+            with exp_tab_app:
+                if q.explanation:
+                    converted = _markdown_to_app_explanation(q.explanation)
+                    if converted:
+                        for section in converted:
+                            st.markdown(f"**{section['sectionName']}**")
+                            st.markdown(section['content'])
+                            st.divider()
+                    else:
+                        st.warning("Could not parse explanation into sections — check formatting.")
+                else:
+                    st.info("No explanation set yet.")
+
+            # --- Tags & Metadata ---
+            with st.expander("🏷️ Edit Tags & Metadata", expanded=False):
+                subjects_list = [""] + list(syllabus_csv.keys())
+                subj_idx = subjects_list.index(q.subject) if q.subject in subjects_list else 0
+
+                tag_c1, tag_c2, tag_c3 = st.columns(3)
+                with tag_c1:
+                    new_subj = st.selectbox("Subject", subjects_list, index=subj_idx, key=f"ra_subj_{uid}")
+                    q.subject = new_subj or None
+
+                topics_list = [""] + list(syllabus_csv.get(new_subj, {}).keys()) if new_subj else [""]
+                topic_idx = topics_list.index(q.topic) if q.topic in topics_list else 0
+                with tag_c2:
+                    new_topic = st.selectbox(
+                        "Topic", topics_list, index=topic_idx,
+                        disabled=not new_subj, key=f"ra_topic_{uid}"
+                    )
+                    q.topic = new_topic or None
+
+                subtopics_raw = syllabus_csv.get(new_subj, {}).get(new_topic, []) if (new_subj and new_topic) else []
+                subtopics_list = [""] + [s['subtopic'] for s in subtopics_raw]
+                st_idx = subtopics_list.index(q.subtopic) if q.subtopic in subtopics_list else 0
+                with tag_c3:
+                    new_st = st.selectbox(
+                        "Subtopic", subtopics_list, index=st_idx,
+                        disabled=not (new_subj and new_topic), key=f"ra_subtopic_{uid}"
+                    )
+                    q.subtopic = new_st or None
+
+                meta1, meta2, meta3, meta4 = st.columns(4)
+                with meta1:
+                    pat_idx = _PATTERN_OPTS.index(q.pattern) if q.pattern in _PATTERN_OPTS else 0
+                    new_pat = st.selectbox("Pattern", _PATTERN_OPTS, index=pat_idx, key=f"ra_pat_{uid}")
+                    q.pattern = new_pat if new_pat != "Not Set" else None
+
+                with meta2:
+                    ct_opts = ["Not Set", "Static", "Current Affairs"]
+                    ct_idx = ct_opts.index(q.content_type) if q.content_type in ct_opts else 0
+                    new_ct = st.selectbox("Content Type", ct_opts, index=ct_idx, key=f"ra_ct_{uid}")
+                    q.content_type = new_ct if new_ct != "Not Set" else None
+
+                with meta3:
+                    new_diff = st.number_input(
+                        "Difficulty (1-5)", min_value=1.0, max_value=5.0,
+                        value=float(q.difficulty) if q.difficulty else 3.0, step=0.5,
+                        key=f"ra_diff_{uid}"
+                    )
+                    q.difficulty = new_diff
+
+                with meta4:
+                    new_silly = st.checkbox(
+                        "Silly Mistakes",
+                        value=bool(q.prone_to_silly_mistakes),
+                        key=f"ra_silly_{uid}"
+                    )
+                    q.prone_to_silly_mistakes = new_silly
+
+                tt_opts = ["Test Series", "Daily Challenge", "Topic-wise"]
+                current_tt = []
+                if q.test_type:
+                    if isinstance(q.test_type, str):
+                        current_tt = [t.strip() for t in q.test_type.split(',') if t.strip() in tt_opts]
+                    elif isinstance(q.test_type, list):
+                        current_tt = [t for t in q.test_type if t in tt_opts]
+                new_tt = st.multiselect("Test Type", tt_opts, default=current_tt, key=f"ra_tt_{uid}")
+                q.test_type = ', '.join(new_tt) if new_tt else None
+
+                m_col, y_col = st.columns(2)
+                with m_col:
+                    q.month = st.number_input("Month (1-12)", 1, 12, value=q.month or 3, key=f"ra_month_{uid}")
+                with y_col:
+                    q.year = st.number_input("Year", 1950, 2050, value=q.year or 2025, key=f"ra_year_{uid}")
+
+            # --- App Dev Status (on-demand) ---
+            with st.expander("🔍 App Dev Status", expanded=False):
+                check_key = f"ra_app_data_{uid}"
+                if st.button("Fetch App Dev Status", key=f"ra_fetch_{uid}"):
+                    st.session_state[check_key] = manager.archivist.get_app_mcq_data(
+                        uid, env='dev', question_text=q.question_english
+                    )
+
+                app_data = st.session_state.get(check_key, "NOT_FETCHED")
+                if app_data == "NOT_FETCHED":
+                    st.caption("Click 'Fetch App Dev Status' to check.")
+                elif app_data is None:
+                    st.warning("⚠️ Not found in App Dev DB — save to DB first (will create new entry).")
+                else:
+                    matched_by = app_data.get('matched_by', 'uuid')
+                    if matched_by == 'text':
+                        st.success("Found in App Dev DB (matched by question text — UUID differs)")
+                        st.caption(f"App Dev MCQ UUID: `{app_data.get('id')}`")
+                    else:
+                        st.success("Found in App Dev DB (matched by UUID ✓)")
+
+                    # Taxonomy check
+                    tax = app_data.get('taxonomies', [])
+                    if tax:
+                        tax_by_level = {t['level']: t['name'] for t in tax}
+                        st.markdown("**Taxonomy links:** " + " | ".join(
+                            f"L{t['level']}: {t['name']}" for t in tax
+                        ))
+                        # Compare against current question tags
+                        expected = {1: q.subject, 2: q.topic, 3: q.subtopic}
+                        mismatches = []
+                        for lvl, exp_name in expected.items():
+                            actual = tax_by_level.get(lvl, '')
+                            if exp_name and actual.lower() != exp_name.lower():
+                                mismatches.append(
+                                    f"L{lvl}: expected '{exp_name}', got '{actual or 'MISSING'}'"
+                                )
+                        if mismatches:
+                            st.warning("Taxonomy mismatch — save changes to fix: " + "; ".join(mismatches))
+                        else:
+                            st.success("Taxonomy links match current tags ✓")
+                    else:
+                        st.warning("No taxonomy links found — save changes to re-sync.")
+
+                    # Tags (test types)
+                    st.markdown(f"**Test type tags in App Dev:** `{app_data.get('tags', [])}`")
+
+                    # App explanation preview
+                    app_exp = app_data.get('explanation')
+                    if app_exp:
+                        try:
+                            exp_json = json.loads(app_exp) if isinstance(app_exp, str) else app_exp
+                            with st.expander("Current App Dev Explanation (JSON)"):
+                                for sec in exp_json:
+                                    st.markdown(f"**{sec.get('sectionName', '')}**")
+                                    st.markdown(sec.get('content', '')[:200] + ("..." if len(sec.get('content', '')) > 200 else ""))
+                        except Exception:
+                            st.text(str(app_exp)[:300])
+                    else:
+                        st.warning("No explanation stored in App Dev yet.")
+
 
 def render_review_interface(questions, test_code, list_key='loaded_questions', unsaved=False):
     """
@@ -1496,7 +2145,9 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
     
     st.divider()
 
-    # Save Changes
+    # Save Changes — always syncs to app dev; prod is opt-in
+    also_push_prod = st.checkbox("Also push to App Prod on save", value=False, key=f"push_prod_{test_code}")
+
     c_save, c_dl = st.columns(2)
     with c_save:
         if st.button("💾 Save to Database", type="primary"):
@@ -1538,10 +2189,13 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
                     for idx, q in enumerate(selected_questions):
                         q.question_number = idx + 1
 
-                    # Save only selected questions
-                    success = manager.archivist.save_questions(selected_questions, test_code)
+                    # Always sync to app dev; optionally also push to prod
+                    target_envs = ["dev"]
+                    if also_push_prod:
+                        target_envs.append("prod")
+                    success = manager.archivist.save_questions(selected_questions, test_code, target_envs=target_envs)
                     if success:
-                        st.success(f"✅ Successfully saved {len(selected_questions)} selected question(s) to database!")
+                        st.success(f"✅ Successfully saved {len(selected_questions)} selected question(s) to UPSC DB and App Dev!")
                         if unsaved:
                             st.session_state.is_unsaved_new_test = False
                             st.rerun()
@@ -1584,7 +2238,7 @@ st.markdown(f'''
 st.caption("Prelims Question Answer Generator")
 
 # Sidebar Mode
-mode = st.sidebar.radio("Mode", ["Prelims Test Series", "Random Generation"])
+mode = st.sidebar.radio("Mode", ["Prelims Test Series", "Random Generation", "Review & Approve"])
 
 if mode == "Prelims Test Series":
     st.header("Prelims Test Series Management")
@@ -1956,11 +2610,19 @@ if mode == "Prelims Test Series":
                                 question_hindi=qd['question_hindi'],
                                 options_hindi=opt_hin_list,
                                 answer=qd['answer'],
-                                question_blueprint=qd['question_blueprint'],
-                                subject=qd['subject'],
+                                question_blueprint=qd.get('question_blueprint'),
+                                subject=qd.get('subject'),
+                                topic=qd.get('topic'),
+                                subtopic=qd.get('subtopic'),
+                                test_type=qd.get('test_type'),
+                                pattern=qd.get('pattern'),
+                                content_type=qd.get('content_type'),
                                 difficulty=qd.get('difficulty'),
                                 explanation=qd.get('explanation'),
-                                user_feedback=qd['quality_feedback'],
+                                prone_to_silly_mistakes=qd.get('prone_to_silly_mistakes'),
+                                month=qd.get('month'),
+                                year=qd.get('year'),
+                                user_feedback=qd.get('quality_feedback'),
                                 is_selected=is_selected,
                                 is_rejected=is_rejected
                             )
@@ -2021,6 +2683,66 @@ elif mode == "Random Generation":
     with col3:
         source_text = st.text_area("Context / Text (Optional)", height=68)
         uploaded_pdf = st.file_uploader("Upload PDF (Optional)", type=['pdf'])
+
+    # PDF page range selector + Gemini-powered pre-extraction
+    pdf_extracted_context = None
+    pdf_source = None
+    if uploaded_pdf is not None:
+        pdf_bytes = uploaded_pdf.read()
+        uploaded_pdf.seek(0)
+        total_pages = manager.get_pdf_page_count(pdf_bytes)
+
+        file_size_mb = len(pdf_bytes) / (1024 * 1024)
+        st.caption(f"📄 **{uploaded_pdf.name}** — {total_pages} pages · {file_size_mb:.1f} MB")
+
+        if file_size_mb > 50:
+            st.warning(
+                f"⚠️ Large file ({file_size_mb:.0f} MB). Extracting all {total_pages} pages at once may produce "
+                f"truncated results. **Use a page range** to get complete extraction — Gemini processes the full document "
+                f"but output is capped. Recommended: extract 50–100 pages at a time."
+            )
+
+        use_page_range = st.checkbox("Select page range (recommended for large PDFs)", value=total_pages > 30)
+        page_range = None
+        if use_page_range and total_pages > 0:
+            pr_col1, pr_col2 = st.columns(2)
+            with pr_col1:
+                pg_start = st.number_input("From page", min_value=1, max_value=total_pages, value=1)
+            with pr_col2:
+                pg_end = st.number_input("To page", min_value=1, max_value=total_pages,
+                                         value=min(total_pages, 30))
+            page_range = (int(pg_start), int(pg_end))
+
+        extract_key = f"pdf_ctx_{uploaded_pdf.name}_{page_range}"
+        if extract_key not in st.session_state:
+            st.session_state[extract_key] = None
+
+        ext_col1, ext_col2 = st.columns([4, 1])
+        with ext_col1:
+            if st.session_state[extract_key]:
+                st.success(f"✅ PDF extracted — {len(st.session_state[extract_key])} chars ready")
+            else:
+                st.info("Click **Extract PDF** to process the PDF with Gemini before generating.")
+        with ext_col2:
+            if st.button("📥 Extract PDF", help="Extract content from PDF using Gemini AI (required for accurate results)"):
+                with st.spinner("Extracting PDF content with Gemini..."):
+                    st.session_state[extract_key] = manager.extract_pdf_context(
+                        pdf_bytes, filename=uploaded_pdf.name, page_range=page_range
+                    )
+                st.rerun()
+
+        pdf_extracted_context = st.session_state.get(extract_key)
+
+        # Build human-readable source label
+        base_name = uploaded_pdf.name.replace(".pdf", "").replace("_", " ")
+        if page_range:
+            pdf_source = f"{base_name}, pp. {page_range[0]}–{page_range[1]}"
+        else:
+            pdf_source = base_name
+
+        if pdf_extracted_context:
+            with st.expander("Preview extracted content", expanded=False):
+                st.text(pdf_extracted_context[:2000] + ("..." if len(pdf_extracted_context) > 2000 else ""))
 
     # Advanced configuration (collapsed by default)
     # Initialize session state for tracking if user enabled advanced config
@@ -2113,7 +2835,7 @@ elif mode == "Random Generation":
             st.error("Please add at least one row with Count > 0 in the configuration table.")
         else:
             # Validate Topic Source
-            has_context = bool((source_text and source_text.strip()) or uploaded_pdf)
+            has_context = bool((source_text and source_text.strip()) or pdf_extracted_context or uploaded_pdf)
             has_main_topic = bool(topic_input and topic_input.strip())
 
             rows_have_topics = True
@@ -2162,11 +2884,16 @@ elif mode == "Random Generation":
             with st.status("Generating...", expanded=True) as status:
                 try:
                     status.write("Analyzing topic & checking if web research is needed...")
+                    # Warn if PDF uploaded but not yet extracted
+                    if uploaded_pdf is not None and not pdf_extracted_context:
+                        status.write("⚠️ PDF not pre-extracted — extracting with Gemini now...")
                     questions_obj, usage, research_sources = asyncio.run(manager.generate_questions(
                         source_text=source_text,
                         uploaded_pdf=uploaded_pdf,
-                        topic_input=topic_input, # Passed for context planning
-                        question_distribution=final_config
+                        topic_input=topic_input,
+                        question_distribution=final_config,
+                        pdf_extracted_context=pdf_extracted_context,
+                        pdf_source=pdf_source,
                     ))
                     if research_sources:
                         st.session_state.research_sources = research_sources
@@ -2195,3 +2922,6 @@ elif mode == "Random Generation":
 
         # We use a dummy test code for docx download
         render_review_interface(qs, "random_generated", 'random_questions')
+
+elif mode == "Review & Approve":
+    render_review_approve()

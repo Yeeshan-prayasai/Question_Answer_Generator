@@ -1,10 +1,12 @@
 import os
+import io
 import time
 import asyncio
 import pypdf
 import uuid
 from google import genai
-from typing import List, Optional, Any
+from google.genai import types as gtypes
+from typing import List, Optional, Any, Tuple
 
 try:
     from .planner import PlannerAgent
@@ -48,6 +50,106 @@ class QuestionManager:
 
         self.global_token_usage = []
 
+    def extract_pdf_context(self, pdf_bytes: bytes, filename: str = "document.pdf",
+                            page_range: Optional[Tuple[int, int]] = None) -> str:
+        """
+        Upload PDF to Gemini File API and extract structured content for UPSC question generation.
+        Falls back to pypdf on error. Returns extracted text.
+        """
+        try:
+            print(f"[PDFExtractor] Uploading PDF to Gemini File API ({len(pdf_bytes)//1024}KB)...")
+            uploaded_file = self.client.files.upload(
+                file=io.BytesIO(pdf_bytes),
+                config={"mime_type": "application/pdf", "display_name": filename},
+            )
+            print(f"[PDFExtractor] Uploaded: {uploaded_file.uri}")
+
+            page_instruction = ""
+            if page_range:
+                start_pg, end_pg = page_range
+                page_instruction = f"\n\nFocus ONLY on pages {start_pg} to {end_pg} of the document."
+
+            prompt = (
+                f"You are extracting content from this document for UPSC Prelims question generation.{page_instruction}\n\n"
+                f"STRICTLY IGNORE the following — do NOT include them in output:\n"
+                f"- Any URLs, website links, domain names (upscpdf.com, telegram.me, t.me, pdfnotesco, etc.)\n"
+                f"- Watermarks, repeated headers/footers, page numbers, download links\n"
+                f"- Any overlay text that repeats across pages (these are watermarks)\n\n"
+                f"Extract ONLY the actual educational/factual content. Include:\n"
+                f"- Key facts, statistics, data points, dates, numbers\n"
+                f"- Government schemes, policies, laws, acts, articles\n"
+                f"- International agreements, summits, organizations\n"
+                f"- Important events, appointments, awards\n"
+                f"- Scientific discoveries, technologies\n"
+                f"- Historical facts, geographical data, constitutional provisions\n\n"
+                f"Format: Organize by topic/section with clear headings. Use bullet points. "
+                f"Be comprehensive and preserve all numerical data exactly. "
+                f"If a page contains only watermarks/URLs and no real content, skip it silently."
+            )
+
+            resp = self.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[
+                    gtypes.Part.from_uri(file_uri=uploaded_file.uri, mime_type="application/pdf"),
+                    gtypes.Part.from_text(prompt),
+                ],
+                config=gtypes.GenerateContentConfig(
+                    temperature=0,
+                    max_output_tokens=32000,
+                ),
+            )
+
+            extracted = resp.text.strip() if resp.text else ""
+            print(f"[PDFExtractor] Extracted {len(extracted)} chars from PDF")
+
+            if hasattr(resp, "usage_metadata"):
+                self.global_token_usage.append(resp.usage_metadata)
+
+            # Clean up uploaded file
+            try:
+                self.client.files.delete(name=uploaded_file.name)
+            except Exception:
+                pass
+
+            return extracted
+
+        except Exception as e:
+            print(f"[PDFExtractor] Gemini extraction failed: {e}, falling back to pypdf")
+            try:
+                reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+                pages = reader.pages
+                if page_range:
+                    start_pg, end_pg = page_range
+                    pages = reader.pages[max(0, start_pg - 1):end_pg]
+                return "\n".join(p.extract_text() or "" for p in pages)
+            except Exception as e2:
+                print(f"[PDFExtractor] pypdf fallback also failed: {e2}")
+                return ""
+
+    def _add_section_markers(self, text: str, num_sections: int) -> str:
+        """Split extracted text into N labelled sections so the planner distributes questions evenly."""
+        if num_sections <= 1 or not text.strip():
+            return text
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        if len(paragraphs) < num_sections:
+            return text  # Not enough content to split meaningfully
+        chunk_size = max(1, len(paragraphs) // num_sections)
+        sections = []
+        for i in range(num_sections):
+            start = i * chunk_size
+            end = start + chunk_size if i < num_sections - 1 else len(paragraphs)
+            chunk = '\n\n'.join(paragraphs[start:end])
+            sections.append(f"=== SECTION {i+1} of {num_sections} ===\n{chunk}")
+        return '\n\n'.join(sections)
+
+    def get_pdf_page_count(self, pdf_bytes: bytes) -> int:
+        """Returns page count of a PDF using pypdf (lightweight, no API call)."""
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+            return len(reader.pages)
+        except Exception:
+            return 0
+
     async def _per_question_execution(self, plan_tuple):
         """
         Executes generation and translation for a single question plan.
@@ -69,12 +171,29 @@ class QuestionManager:
 
             # Extract difficulty from blueprint and map to 1-5 scale
             difficulty = None
+            source_passage = None
             difficulty_map = {'Easy': 2.0, 'Moderate': 3.0, 'Difficult': 4.0}
+            in_passage = False
+            passage_lines = []
             for line in clean_blueprint.split('\n'):
-                if line.strip().startswith('Difficulty:'):
-                    raw_difficulty = line.strip().replace('Difficulty:', '').strip()
+                stripped = line.strip()
+                if stripped.startswith('Difficulty:'):
+                    raw_difficulty = stripped.replace('Difficulty:', '').strip()
                     difficulty = difficulty_map.get(raw_difficulty, 3.0)
-                    break
+                if stripped.startswith('Source Passage:'):
+                    passage_val = stripped.replace('Source Passage:', '').strip()
+                    if passage_val and passage_val not in ('[copy the exact', 'N/A', ''):
+                        passage_lines = [passage_val]
+                    in_passage = True
+                elif in_passage:
+                    # Multi-line passage: continue until next key: field
+                    if ':' in stripped and stripped.split(':')[0].replace(' ', '').isalpha() and len(stripped.split(':')[0]) < 25:
+                        in_passage = False
+                    else:
+                        if stripped:
+                            passage_lines.append(stripped)
+            if passage_lines:
+                source_passage = ' '.join(passage_lines).strip()
 
             que_hindi = None
             if que:
@@ -100,6 +219,7 @@ class QuestionManager:
                     question_blueprint=clean_blueprint,
                     subject=subject,
                     difficulty=difficulty,
+                    source_passage=source_passage,
                     topic=None,  # Will be set during review/tagging
                     subtopic=None,  # Will be set during review/tagging
                     month=None,  # Will be set during review
@@ -162,7 +282,9 @@ class QuestionManager:
                                uploaded_pdf: Any,
                                topic_input: Optional[str],
                                question_distribution: List[dict],
-                               start_question_number: int = 1):
+                               start_question_number: int = 1,
+                               pdf_extracted_context: Optional[str] = None,
+                               pdf_source: Optional[str] = None):
 
         start = time.perf_counter()
         num_questions = sum(item['count'] for item in question_distribution)
@@ -178,25 +300,30 @@ class QuestionManager:
             print(f"Error creating async client: {e}")
             raise e
 
-        # Process Context
+        # Build context — prefer pre-extracted PDF context over raw PDF bytes
         context = ""
-        if uploaded_pdf is not None:
-            # Check if uploaded_pdf is file-like or path
-            if isinstance(uploaded_pdf, str):
-                 try:
-                     reader = pypdf.PdfReader(uploaded_pdf)
-                     for page in reader.pages:
-                        context += page.extract_text() + "\n"
-                 except Exception as e:
-                     print(f"Error reading PDF path: {e}")
-            elif hasattr(uploaded_pdf, 'read'):
-                 try:
-                     reader = pypdf.PdfReader(uploaded_pdf)
-                     for page in reader.pages:
-                        context += page.extract_text() + "\n"
-                 except Exception as e:
-                     print(f"Error reading PDF stream: {e}")
-        
+        if pdf_extracted_context:
+            context += pdf_extracted_context + "\n"
+        elif uploaded_pdf is not None:
+            # Fallback: use Gemini extraction or pypdf on the raw file object
+            pdf_bytes = None
+            if isinstance(uploaded_pdf, (str, os.PathLike)):
+                try:
+                    with open(uploaded_pdf, "rb") as f:
+                        pdf_bytes = f.read()
+                except Exception as e:
+                    print(f"Error reading PDF path: {e}")
+            elif hasattr(uploaded_pdf, "read"):
+                try:
+                    uploaded_pdf.seek(0)
+                    pdf_bytes = uploaded_pdf.read()
+                except Exception as e:
+                    print(f"Error reading PDF stream: {e}")
+
+            if pdf_bytes:
+                fname = getattr(uploaded_pdf, "name", "document.pdf")
+                context += self.extract_pdf_context(pdf_bytes, filename=fname) + "\n"
+
         if source_text:
             context += source_text + "\n"
 
@@ -207,15 +334,17 @@ class QuestionManager:
         has_context = context.strip()
         if has_topic or has_context:
             try:
-                classify_topic = topic_input if has_topic else ""
-                classify_context = context if has_context else ""
+                # For PDF content, use the pdf_source (filename) as an additional topic hint
+                # so the researcher can correctly identify current-affairs sections
+                classify_topic = topic_input if has_topic else (pdf_source or "")
+                classify_context = context[:800] if has_context else ""
                 if self.researcher.needs_web_search(classify_topic, classify_context, self.global_token_usage):
                     print("ResearcherAgent: Topic/context needs web research, searching...")
-                    # Use topic if available, otherwise derive search query from context
-                    search_topic = topic_input if has_topic else context[:300]
+                    # Use topic if available; for PDF-only, derive search query from first 300 chars of extracted content
+                    search_topic = topic_input if has_topic else (pdf_source or context[:300])
                     research_result = self.researcher.research_topic(
                         topic=search_topic,
-                        context_hint=context[:500] if has_context and has_topic else "",
+                        context_hint=context[:500] if has_context and (has_topic or pdf_source) else "",
                         global_token_usage=self.global_token_usage
                     )
                     if research_result['context']:
@@ -234,6 +363,12 @@ class QuestionManager:
 
         # Planner Step
         print(f"[Manager] Context for planner: {len(context)} chars")
+
+        # Split context into sections so the planner draws questions from across the document
+        total_questions = sum(item.get('count', 1) for item in question_distribution)
+        if context.strip() and total_questions > 1:
+            context = self._add_section_markers(context, total_questions)
+            print(f"[Manager] Context split into {total_questions} sections for even distribution")
 
         plans_response = None
 
@@ -291,11 +426,16 @@ class QuestionManager:
              current_subject = "Custom Content"
              
         questions_result = await self._collate_questions(
-            plans_response.questions, 
+            plans_response.questions,
             subject=current_subject,
             start_number=start_question_number
         )
-        
+
+        # Stamp PDF source on every generated question
+        if pdf_source and questions_result.questions:
+            for q in questions_result.questions:
+                q.pdf_source = pdf_source
+
         token_usage = calculate_total_usage(self.global_token_usage)
 
         end = time.perf_counter()
