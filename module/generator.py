@@ -193,6 +193,7 @@ class GeneratorAgent:
         # Use more retries for critical patterns that often fail
         is_critical_pattern = (
             'multiple-statement-4' in blueprint_lower or
+            'multiple-statement-3' in blueprint_lower or
             'complex 3-stmt' in blueprint_lower or
             '3-stmt assertion' in blueprint_lower
         )
@@ -241,8 +242,26 @@ DO NOT use 2-statement assertion-reason format. All 3 statements required.
 """
             elif 'multiple-statement-3' in blueprint_lower:
                 pattern_constraint = """
-### CRITICAL STRUCTURE REQUIREMENT:
-This question requires EXACTLY 3 statements numbered 1, 2, 3. Include all 3 and end with the closing question.
+##########################################################
+# CRITICAL: THIS IS A 3-STATEMENT QUESTION               #
+##########################################################
+
+YOU MUST GENERATE EXACTLY 3 STATEMENTS. NOT 2. THREE (3).
+
+REQUIRED STRUCTURE:
+1. [First statement]
+2. [Second statement]
+3. [Third statement] ← THIS IS MANDATORY. DO NOT SKIP.
+
+Which of the statements given above is/are correct?
+
+CHECKLIST BEFORE RESPONDING:
+☐ Statement 1 exists
+☐ Statement 2 exists
+☐ Statement 3 exists ← VERIFY THIS IS PRESENT
+☐ Closing question exists AFTER statement 3
+
+IF YOU ONLY HAVE 2 STATEMENTS, YOU ARE WRONG. ADD A 3RD.
 """
             elif 'multiple-statement-2' in blueprint_lower:
                 pattern_constraint = """
@@ -364,10 +383,11 @@ Generate explanation in markdown with these exact sections (NO markdown heading 
                 return None
 
         # If all retries exhausted, check if this is a critical pattern
-        # For 4-statement and 3-stmt A/R patterns, return None instead of defective question
+        # For these patterns, return None instead of a defective question
         blueprint_lower = blueprint.lower()
         is_critical_pattern = (
             'multiple-statement-4' in blueprint_lower or
+            'multiple-statement-3' in blueprint_lower or
             'complex 3-stmt' in blueprint_lower or
             '3-stmt assertion' in blueprint_lower
         )
