@@ -19,7 +19,31 @@ class PlannerAgent:
         self.planner_guidelines = load_prompt_file('planner_guidelines.txt')
         self.archivist = ArchivistAgent()
         self.past_blueprints = self.archivist.get_all_questions()
+        # Load taxonomy names so the planner uses exact DB names
+        tax = self.archivist.get_taxonomy_names(env='dev')
+        self.taxonomy_topics = tax.get(2, [])
+        self.taxonomy_subtopics = tax.get(3, [])
 
+    def _taxonomy_reference(self) -> str:
+        """Return a formatted taxonomy reference block for injection into system prompts."""
+        if not self.taxonomy_topics and not self.taxonomy_subtopics:
+            return ""
+        lines = [
+            "---",
+            "## Taxonomy Reference [HARD RESTRICTION]",
+            "When writing Topic and Subtopic fields in each blueprint, you MUST use ONLY the exact names listed below.",
+            "Do NOT invent new names. Pick the closest match from the list.",
+            "",
+        ]
+        if self.taxonomy_topics:
+            lines.append("**Available Topics (use exactly):**")
+            lines.append(", ".join(self.taxonomy_topics))
+            lines.append("")
+        if self.taxonomy_subtopics:
+            lines.append("**Available Subtopics (use exactly):**")
+            lines.append(", ".join(self.taxonomy_subtopics))
+            lines.append("")
+        return "\n".join(lines)
 
     def _generate_content(self, user_prompt, system_prompt, global_token_usage):
         try:
@@ -145,13 +169,13 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 ```
 ---
 Possible value of Subjects: [HARD RESTRICTION: You need to choose subject from below only]
-1. History & Culture
+1. History
 2. Geography
-3. Polity & Governance
+3. Polity
 4. Economy
 5. Environment
-6. Science & Technology
-7. CA & IR
+6. Science & Tech
+7. Current Affairs
 8. Miscellaneous
 
 
@@ -165,9 +189,9 @@ Return an **array of strings**, each representing one complete question plan in 
 
 Example:
 [
-"Subject: History & Culture
-Topic: Medieval India
-Subtopic: Vijayanagara Empire
+"Subject: History
+Topic: Medieval History
+Subtopic: South Indian Kingdoms
 Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
@@ -293,13 +317,13 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 ```
 ---
 Possible value of Subjects: [HARD RESTRICTION: You need to choose subject from below only]
-1. History & Culture
+1. History
 2. Geography
-3. Polity & Governance
+3. Polity
 4. Economy
 5. Environment
-6. Science & Technology
-7. CA & IR
+6. Science & Tech
+7. Current Affairs
 8. Miscellaneous
 
 
@@ -313,9 +337,9 @@ Return an **array of strings**, each representing one complete question plan in 
 
 Example:
 [
-"Subject: History & Culture
-Topic: Medieval India
-Subtopic: Vijayanagara Empire
+"Subject: History
+Topic: Medieval History
+Subtopic: South Indian Kingdoms
 Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
@@ -426,13 +450,13 @@ Your task is to create the **EXACT** requested number of **UPSC-style question b
 ```
 ---
 Possible value of Subjects: [HARD RESTRICTION: You need to choose subject from below only]
-1. History & Culture
+1. History
 2. Geography
-3. Polity & Governance
+3. Polity
 4. Economy
 5. Environment
-6. Science & Technology
-7. CA & IR
+6. Science & Tech
+7. Current Affairs
 8. Miscellaneous
 
 
@@ -446,9 +470,9 @@ Return an **array of strings**, each representing one complete question plan in 
 
 Example:
 [
-"Subject: History & Culture
-Topic: Medieval India
-Subtopic: Vijayanagara Empire
+"Subject: History
+Topic: Medieval History
+Subtopic: South Indian Kingdoms
 Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition
@@ -571,13 +595,13 @@ Miscellaneous (Reports, Awards, Sports, Factual) | 5%
 ```
 ---
 Possible value of Subjects: [HARD RESTRICTION: You need to choose subject from below only]
-1. History & Culture
+1. History
 2. Geography
-3. Polity & Governance
+3. Polity
 4. Economy
 5. Environment
-6. Science & Technology
-7. CA & IR
+6. Science & Tech
+7. Current Affairs
 8. Miscellaneous
 
 
@@ -591,9 +615,9 @@ Return an **array of strings**, each representing one complete question plan in 
 
 Example:
 [
-"Subject: History & Culture
-Topic: Medieval India
-Subtopic: Vijayanagara Empire
+"Subject: History
+Topic: Medieval History
+Subtopic: South Indian Kingdoms
 Question Type: Static
 Difficulty: Moderate
 Cognitive Skill: Recall/Recognition

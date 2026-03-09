@@ -200,22 +200,80 @@ class ArchivistAgent:
             cache[(row['level'], row['name'].lower())] = row['id']
         return cache
 
+    # Planner subject names → app taxonomy level-1 names (canonical names pass through unchanged)
+    _SUBJECT_NAME_MAP = {
+        # Legacy planner names (backwards compat)
+        "history & culture": "history",
+        "polity & governance": "polity",
+        "science & technology": "science & tech",
+        "ca & ir": "current affairs",
+        "current affairs & ir": "current affairs",
+        # Canonical names (from syllabus.csv / taxonomy DB) — already correct
+        "history": "history",
+        "polity": "polity",
+        "science & tech": "science & tech",
+        "current affairs": "current affairs",
+        "economy": "economy",
+        "geography": "geography",
+        "environment": "environment",
+        "miscellaneous": "miscellaneous",
+    }
+
+    def _fuzzy_lookup(self, cache, level, name, cutoff=0.85):
+        """Exact lookup first; falls back to closest difflib match above cutoff."""
+        from difflib import get_close_matches
+        exact = cache.get((level, name.lower()))
+        if exact:
+            return exact
+        candidates = [k[1] for k in cache if k[0] == level]
+        matches = get_close_matches(name.lower(), candidates, n=1, cutoff=cutoff)
+        if matches:
+            print(f"[Taxonomy] Fuzzy match: '{name}' → '{matches[0]}' (level {level})")
+            return cache[(level, matches[0])]
+        return None
+
     def _resolve_taxonomy_ids(self, cache, subject, topic, subtopic):
-        """Return list of taxonomy UUIDs for the given subject/topic/subtopic."""
+        """Return list of taxonomy UUIDs for subject/topic/subtopic with fuzzy fallback."""
         ids = []
         if subject:
-            tid = cache.get((1, subject.lower()))
+            mapped = self._SUBJECT_NAME_MAP.get(subject.lower(), subject.lower())
+            tid = self._fuzzy_lookup(cache, 1, mapped)
             if tid:
                 ids.append(tid)
+            else:
+                print(f"[Taxonomy] No match for subject='{subject}'")
         if topic:
-            tid = cache.get((2, topic.lower()))
+            tid = self._fuzzy_lookup(cache, 2, topic)
             if tid:
                 ids.append(tid)
+            else:
+                print(f"[Taxonomy] No match for topic='{topic}'")
         if subtopic:
-            tid = cache.get((3, subtopic.lower()))
+            tid = self._fuzzy_lookup(cache, 3, subtopic)
             if tid:
                 ids.append(tid)
+            else:
+                print(f"[Taxonomy] No match for subtopic='{subtopic}'")
         return ids
+
+    def get_taxonomy_names(self, env: str = 'dev') -> dict:
+        """Fetch taxonomy names from app DB grouped by level. Used to seed planner."""
+        cfg = _get_app_db_configs().get(env, {})
+        if not cfg.get("host"):
+            return {}
+        try:
+            app_conn = psycopg2.connect(**cfg)
+            app_cur = app_conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            app_cur.execute('SELECT level, name FROM taxonomies ORDER BY level, name')
+            result = {1: [], 2: [], 3: []}
+            for row in app_cur.fetchall():
+                result[row['level']].append(row['name'])
+            app_cur.close()
+            app_conn.close()
+            return result
+        except Exception as e:
+            print(f"get_taxonomy_names error: {e}")
+            return {}
 
     def _sync_to_app_databases(self, questions: List[Question], target_envs: List[str]):
         """
@@ -265,24 +323,7 @@ class ArchivistAgent:
                     explanation = _markdown_to_app_explanation(q.explanation)
                     difficulty = q.difficulty if q.difficulty is not None else 3.0
 
-                    # Upsert learning_item
-                    li_uuid = str(uuid.uuid4())
-                    app_cur.execute("""
-                        INSERT INTO learning_items (
-                            id, "createdAt", "updatedAt", type, "difficultyLevel",
-                            "estimatedTimeSeconds", "isPyq", paper, status,
-                            "isVerified", "canServeIndependently", tags,
-                            "createdBy", "max_marks"
-                        ) VALUES (
-                            %s, NOW(), NOW(), 'mcq', %s,
-                            72, FALSE, 'gs1', 'published',
-                            TRUE, TRUE, %s,
-                            %s, 2
-                        )
-                        ON CONFLICT (id) DO NOTHING
-                    """, (li_uuid, difficulty, tags, SYSTEM_USER_ID))
-
-                    # Check if MCQ already exists (re-save scenario) — get its learningItemId
+                    # Check if MCQ already exists FIRST to avoid orphaned learning_items
                     app_cur.execute(
                         'SELECT "learningItemId" FROM mcqs WHERE id = %s::uuid',
                         (mcq_uuid,)
@@ -290,14 +331,15 @@ class ArchivistAgent:
                     existing = app_cur.fetchone()
 
                     if existing:
-                        # Update tags on existing learning_item and mcq fields
+                        # Update existing learning_item and mcq — do NOT create new li_uuid
                         existing_li_id = existing["learningItemId"]
                         app_cur.execute("""
                             UPDATE learning_items SET
                                 tags = %s,
+                                "difficultyLevel" = %s,
                                 "updatedAt" = NOW()
                             WHERE id = %s
-                        """, (tags, existing_li_id))
+                        """, (tags, difficulty, existing_li_id))
                         app_cur.execute("""
                             UPDATE mcqs SET
                                 "questionText" = %s,
@@ -317,8 +359,38 @@ class ArchivistAgent:
                             q.pattern,
                             mcq_uuid,
                         ))
+                        # Refresh taxonomy links (subject/topic may have changed)
+                        app_cur.execute(
+                            'DELETE FROM learning_item_taxonomies WHERE "learningItemId" = %s',
+                            (existing_li_id,)
+                        )
+                        tax_ids = self._resolve_taxonomy_ids(
+                            tax_cache, q.subject, q.topic, q.subtopic
+                        )
+                        for tax_id in tax_ids:
+                            app_cur.execute("""
+                                INSERT INTO learning_item_taxonomies (
+                                    id, "createdAt", "updatedAt",
+                                    "learningItemId", "taxonomyId"
+                                ) VALUES (%s, NOW(), NOW(), %s, %s)
+                                ON CONFLICT DO NOTHING
+                            """, (str(uuid.uuid4()), existing_li_id, tax_id))
                     else:
-                        # Insert new MCQ
+                        # New question — create learning_item then MCQ
+                        li_uuid = str(uuid.uuid4())
+                        app_cur.execute("""
+                            INSERT INTO learning_items (
+                                id, "createdAt", "updatedAt", type, "difficultyLevel",
+                                "estimatedTimeSeconds", "isPyq", paper, status,
+                                "isVerified", "canServeIndependently", tags,
+                                "createdBy", "max_marks"
+                            ) VALUES (
+                                %s, NOW(), NOW(), 'mcq', %s,
+                                72, FALSE, 'gs1', 'published',
+                                TRUE, TRUE, %s,
+                                %s, 2
+                            )
+                        """, (li_uuid, difficulty, tags, SYSTEM_USER_ID))
                         app_cur.execute("""
                             INSERT INTO mcqs (
                                 id, "createdAt", "updatedAt",
@@ -341,7 +413,6 @@ class ArchivistAgent:
                             q.prone_to_silly_mistakes or False,
                             q.pattern,
                         ))
-
                         # Insert taxonomy links
                         tax_ids = self._resolve_taxonomy_ids(
                             tax_cache, q.subject, q.topic, q.subtopic
@@ -354,6 +425,8 @@ class ArchivistAgent:
                                 ) VALUES (%s, NOW(), NOW(), %s, %s)
                                 ON CONFLICT DO NOTHING
                             """, (str(uuid.uuid4()), li_uuid, tax_id))
+                        if not tax_ids:
+                            print(f"[Archivist] WARNING: No taxonomy IDs resolved for subject='{q.subject}' topic='{q.topic}' subtopic='{q.subtopic}'")
 
                 app_conn.commit()
                 app_cur.close()

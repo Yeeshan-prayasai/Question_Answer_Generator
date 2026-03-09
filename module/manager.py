@@ -161,6 +161,9 @@ class QuestionManager:
             q_num = start_number + index
 
             subject = plan_text.split('Subject:')[-1].strip().split('\n')[0] if 'Subject:' in plan_text else subject
+            topic = plan_text.split('Topic:')[-1].strip().split('\n')[0] if 'Topic:' in plan_text else None
+            subtopic = plan_text.split('Subtopic:')[-1].strip().split('\n')[0] if 'Subtopic:' in plan_text else None
+            pattern = plan_text.split('Format:')[-1].strip().split('\n')[0] if 'Format:' in plan_text else None
 
             print(f'Running Iteration for Q{q_num}')
 
@@ -218,15 +221,15 @@ class QuestionManager:
                     explanation=que.explanation if hasattr(que, 'explanation') else None,
                     question_blueprint=clean_blueprint,
                     subject=subject,
+                    topic=topic,
+                    subtopic=subtopic,
                     difficulty=difficulty,
                     source_passage=source_passage,
-                    topic=None,  # Will be set during review/tagging
-                    subtopic=None,  # Will be set during review/tagging
-                    month=None,  # Will be set during review
-                    year=None,  # Will be set during review
-                    test_type=None,  # Will be set during review
-                    prone_to_silly_mistakes=None,  # Will be set during review
-                    pattern=None,  # Will be set during review
+                    month=None,
+                    year=None,
+                    test_type=None,
+                    prone_to_silly_mistakes=None,
+                    pattern=pattern,
                     content_type=None,  # Will be set during review
                     is_selected=False # Default to False
                 )
