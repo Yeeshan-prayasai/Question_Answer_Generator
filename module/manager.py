@@ -91,7 +91,7 @@ class QuestionManager:
                 model="gemini-2.5-flash",
                 contents=[
                     gtypes.Part.from_uri(file_uri=uploaded_file.uri, mime_type="application/pdf"),
-                    gtypes.Part.from_text(prompt),
+                    gtypes.Part.from_text(text=prompt),
                 ],
                 config=gtypes.GenerateContentConfig(
                     temperature=0,

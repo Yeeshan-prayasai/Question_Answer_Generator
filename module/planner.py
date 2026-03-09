@@ -10,8 +10,7 @@ except ImportError:
 class PlannerAgent:
     def __init__(self, client):
         self.client = client
-        # self.model = "gemini-2.5-pro"
-        self.model = "gemini-3-pro-preview"
+        self.model = "gemini-2.5-pro"
 
         # Load static prompt content
         self.planner_guidelines = load_prompt_file('planner_guidelines.txt')
