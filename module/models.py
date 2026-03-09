@@ -78,6 +78,8 @@ class Question(BaseModel):
     user_feedback: Optional[str] = Field(None, description="User feedback/reason for selection/rejection.")
     is_selected: bool = Field(False, description="Whether the question is selected by the user.")
     is_rejected: bool = Field(False, description="Whether the question is rejected by the user.")
+    pdf_source: Optional[str] = Field(None, description="PDF filename + page range this question was generated from.")
+    source_passage: Optional[str] = Field(None, description="Exact passage/excerpt from the source document this question is based on.")
 
 class TestPaper(BaseModel):
     """Represents the complete UPSC Prelims Test paper."""
