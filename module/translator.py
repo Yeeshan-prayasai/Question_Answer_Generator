@@ -76,11 +76,13 @@ You **MUST** adhere to the following clean, structured format. Do not include an
                         system_instruction=prompt_hindi_converter,
                     ),
                 )
-            
+
             if hasattr(resp, 'usage_metadata'):
                 global_token_usage.append(resp.usage_metadata)
 
+            print(f"[Translator] OK")
             return resp.parsed
         except Exception as e:
+            print(f"[Translator] ERROR: {e}")
             time.sleep(5)
             return None

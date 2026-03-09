@@ -14,17 +14,30 @@ class PlannerAgent:
 
         # Load static prompt content
         self.planner_guidelines = load_prompt_file('planner_guidelines.txt')
+        print(f"[Planner] Model: {self.model}")
         # Deferred import to avoid circular dependency (archivist → manager → planner → archivist)
         try:
             from .archivist import ArchivistAgent
         except (ImportError, KeyError):
             from archivist import ArchivistAgent
-        self.archivist = ArchivistAgent()
-        self.past_blueprints = self.archivist.get_all_questions()
+        try:
+            self.archivist = ArchivistAgent()
+            self.past_blueprints = self.archivist.get_all_questions()
+            print(f"[Planner] Loaded {len(self.past_blueprints)} past blueprints from UPSC DB")
+        except Exception as e:
+            print(f"[Planner] ⚠️ Could not load past blueprints: {e}")
+            self.archivist = None
+            self.past_blueprints = []
         # Load taxonomy names so the planner uses exact DB names
-        tax = self.archivist.get_taxonomy_names(env='dev')
-        self.taxonomy_topics = tax.get(2, [])
-        self.taxonomy_subtopics = tax.get(3, [])
+        try:
+            tax = self.archivist.get_taxonomy_names(env='dev') if self.archivist else {}
+            self.taxonomy_topics = tax.get(2, [])
+            self.taxonomy_subtopics = tax.get(3, [])
+            print(f"[Planner] Taxonomy loaded: {len(self.taxonomy_topics)} topics, {len(self.taxonomy_subtopics)} subtopics")
+        except Exception as e:
+            print(f"[Planner] ⚠️ Could not load taxonomy: {e}")
+            self.taxonomy_topics = []
+            self.taxonomy_subtopics = []
 
     def _taxonomy_reference(self) -> str:
         """Return a formatted taxonomy reference block for injection into system prompts."""

@@ -183,9 +183,13 @@ class QuestionManager:
             subtopic = plan_text.split('Subtopic:')[-1].strip().split('\n')[0] if 'Subtopic:' in plan_text else None
             pattern = plan_text.split('Format:')[-1].strip().split('\n')[0] if 'Format:' in plan_text else None
 
-            print(f'Running Iteration for Q{q_num}')
+            print(f'[Q{q_num}] Starting generation...')
 
             que = await self.generator.generate_question(plan_text, self.global_token_usage)
+            if que is None:
+                print(f'[Q{q_num}] ❌ Generator returned None — skipping question')
+                return None
+            print(f'[Q{q_num}] ✓ Generator OK')
 
             # Strip reference material from blueprint before storing (saves DB space)
             clean_blueprint = plan_text.split('\n\n--- REFERENCE MATERIAL')[0] if '--- REFERENCE MATERIAL' in plan_text else plan_text
@@ -217,13 +221,15 @@ class QuestionManager:
                 source_passage = ' '.join(passage_lines).strip()
 
             que_hindi = None
-            if que:
-                try:
-                    que_hindi = await self.translator.translate_question(que.question, que.options, self.global_token_usage)
-                except Exception as e:
-                    print(f"⚠️ Translation failed for Q{q_num}: {str(e)}")
-                    # Continue without Hindi translation
-                    pass
+            print(f'[Q{q_num}] Starting translation...')
+            try:
+                que_hindi = await self.translator.translate_question(que.question, que.options, self.global_token_usage)
+            except Exception as e:
+                print(f'[Q{q_num}] ❌ Translation exception: {e}')
+            if que_hindi is None:
+                print(f'[Q{q_num}] ❌ Translator returned None — skipping question')
+                return None
+            print(f'[Q{q_num}] ✓ Translation OK')
 
             out = None
             if que and que_hindi:
@@ -422,8 +428,9 @@ class QuestionManager:
             )
 
         if not plans_response or not plans_response.questions:
-            print("Planning failed or returned no questions.")
+            print("❌ Planning failed or returned no questions.")
             return TestPaper(questions=[]), calculate_total_usage(self.global_token_usage), research_sources
+        print(f"✓ Planner returned {len(plans_response.questions)} blueprints")
 
         # Attach web research context to each blueprint so the generator has the facts
         if research_sources and research_context_text:
