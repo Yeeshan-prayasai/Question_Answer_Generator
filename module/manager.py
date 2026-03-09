@@ -16,7 +16,7 @@ try:
     from .researcher import ResearcherAgent
     from .models import Question, TestPaper
     from .utils import calculate_total_usage
-except ImportError:
+except (ImportError, KeyError):
     from planner import PlannerAgent
     from generator import GeneratorAgent
     from translator import TranslatorAgent

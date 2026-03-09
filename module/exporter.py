@@ -5,7 +5,7 @@ try:
     from docx import Document
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-except ImportError:
+except (ImportError, KeyError):
     Document = None
 
 def generate_upsc_docx(questions):

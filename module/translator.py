@@ -2,7 +2,7 @@ from google.genai import types
 import time
 try:
     from .models import QuestionLLMHindi
-except ImportError:
+except (ImportError, KeyError):
     from models import QuestionLLMHindi
 
 class TranslatorAgent:

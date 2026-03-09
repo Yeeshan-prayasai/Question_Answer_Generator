@@ -11,7 +11,7 @@ import streamlit as st
 
 try:
     from .models import Question
-except ImportError:
+except (ImportError, KeyError):
     from models import Question
 
 current_dir = os.path.dirname(os.path.abspath(__file__))

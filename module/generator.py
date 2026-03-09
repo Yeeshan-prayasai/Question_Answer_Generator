@@ -5,7 +5,7 @@ import re
 try:
     from .models import QuestionLLM
     from .prompt_crafter import PromptCrafter
-except ImportError:
+except (ImportError, KeyError):
     from models import QuestionLLM
     from prompt_crafter import PromptCrafter
 

@@ -3,7 +3,7 @@ import time
 try:
     from .models import QuestionPlan
     from .utils import load_prompt_file
-except ImportError:
+except (ImportError, KeyError):
     from models import QuestionPlan
     from utils import load_prompt_file
 
@@ -17,7 +17,7 @@ class PlannerAgent:
         # Deferred import to avoid circular dependency (archivist → manager → planner → archivist)
         try:
             from .archivist import ArchivistAgent
-        except ImportError:
+        except (ImportError, KeyError):
             from archivist import ArchivistAgent
         self.archivist = ArchivistAgent()
         self.past_blueprints = self.archivist.get_all_questions()

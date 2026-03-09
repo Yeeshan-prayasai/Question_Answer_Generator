@@ -3,7 +3,7 @@ import re
 import random
 try:
     from .prompt_config import PROMPT_CONFIG
-except ImportError:
+except (ImportError, KeyError):
     from prompt_config import PROMPT_CONFIG
 
 class PromptCrafter:
