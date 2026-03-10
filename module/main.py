@@ -2195,7 +2195,8 @@ def render_review_interface(questions, test_code, list_key='loaded_questions', u
                         target_envs.append("prod")
                     success = manager.archivist.save_questions(selected_questions, test_code, target_envs=target_envs)
                     if success:
-                        st.success(f"✅ Successfully saved {len(selected_questions)} selected question(s) to UPSC DB and App Dev!")
+                        env_label = "UPSC DB, App Dev" + (" & App Prod" if also_push_prod else "")
+                        st.success(f"✅ Successfully saved {len(selected_questions)} selected question(s) to {env_label}!")
                         if unsaved:
                             st.session_state.is_unsaved_new_test = False
                             st.rerun()
