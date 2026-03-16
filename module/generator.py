@@ -80,6 +80,68 @@ class GeneratorAgent:
 
         return True, ""
 
+    def _normalize_option_order(self, question_obj, blueprint):
+        """
+        Enforces canonical ordering ONLY for specific option patterns:
+        - 2-statement options (1 only / 2 only / Both / Neither)
+        - How-Many options (Only one / Only two / Only three / All N)
+        - 3-statement: option containing all three (1, 2 and 3) goes last
+        All other question types (4-statement, A/R, match-the-pair, etc.) are left untouched.
+        Updates question_obj.answer to match the new position.
+        """
+        options = list(question_obj.options)
+        correct_idx = ord(question_obj.answer) - ord('A')
+        correct_text = options[correct_idx]
+        new_options = None
+
+        opts_lower = [o.lower().strip() for o in options]
+
+        # ── How Many: options must ALL be "only one/two/three" or "all N" ──
+        has_only_one   = any('only one'   in o or o.startswith('only one')   for o in opts_lower)
+        has_only_two   = any('only two'   in o or o.startswith('only two')   for o in opts_lower)
+        has_all        = any(o.startswith('all ') for o in opts_lower)
+
+        if has_only_one and has_only_two and has_all:
+            def how_many_rank(opt):
+                o = opt.lower()
+                if o.startswith('all '): return 4
+                if 'three' in o: return 3
+                if 'two' in o: return 2
+                if 'one' in o: return 1
+                return 5
+            new_options = sorted(options, key=how_many_rank)
+
+        # ── 2-statement: options must be 1 only / 2 only / Both / Neither ──
+        elif (any('neither' in o for o in opts_lower) and
+              any('both' in o for o in opts_lower) and
+              any(re.search(r'\b(1|i)\b.*only|only.*\b(1|i)\b', o) for o in opts_lower) and
+              any(re.search(r'\b(2|ii)\b.*only|only.*\b(2|ii)\b', o) for o in opts_lower)):
+            def two_stmt_rank(opt):
+                o = opt.lower()
+                if 'neither' in o: return 4
+                if 'both' in o: return 3
+                if re.search(r'\b(2|ii)\b', o): return 2
+                return 1
+            new_options = sorted(options, key=two_stmt_rank)
+
+        # ── 3-statement: only move "1, 2 and 3" option to last ──
+        else:
+            def is_all_three(opt):
+                o = opt.lower()
+                return ('1' in o and '2' in o and '3' in o) or 'all three' in o
+            all_three = [o for o in options if is_all_three(o)]
+            others    = [o for o in options if not is_all_three(o)]
+            # Only apply if exactly one "all three" option exists and others are pairwise combos
+            if len(all_three) == 1 and len(others) == 3:
+                new_options = others + all_three
+
+        if new_options and new_options != options:
+            new_idx = new_options.index(correct_text)
+            question_obj.options = new_options
+            question_obj.answer  = chr(ord('A') + new_idx)
+
+        return question_obj
+
     def _count_statements(self, question_text):
         """
         Count the number of statements in a multi-statement question.
@@ -371,7 +433,8 @@ Generate explanation in markdown with these exact sections (NO markdown heading 
                         time.sleep(1)
                         continue
 
-                # All validations passed
+                # All validations passed — normalize option order for specific patterns
+                question_obj = self._normalize_option_order(question_obj, blueprint)
                 print("✓ All validations passed")
                 return question_obj
 
