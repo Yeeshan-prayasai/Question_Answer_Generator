@@ -64,3 +64,8 @@ instance/
 
 # Dev containers
 .devcontainer/
+
+# Content/data files (not source code)
+*.docx
+*.pdf
+*.csv

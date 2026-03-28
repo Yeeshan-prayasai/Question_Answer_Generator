@@ -1160,16 +1160,22 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
             expander_state_key = f"{key_prefix}_expander_state_{q.db_uuid or q.id}"
 
             if tag_state_key not in st.session_state:
-                # Use already-set tags if available, otherwise auto-detect from blueprint
-                if q.subject and q.topic and q.subtopic:
-                    auto_subject = q.subject
-                    auto_topic = q.topic
-                    auto_subtopic = q.subtopic
-                else:
-                    tags = auto_tag_from_blueprint(q.question_blueprint or "")
-                    auto_subject = tags['subject'] or q.subject or ''
-                    auto_topic = tags['topic'] or q.topic or ''
-                    auto_subtopic = tags['subtopic'] or q.subtopic or ''
+                # Always run auto_tag to map raw blueprint values to syllabus CSV keys
+                tags = auto_tag_from_blueprint(q.question_blueprint or "")
+                print(f"[AutoTag Q{q.id}] blueprint subject='{q.subject}' topic='{q.topic}' subtopic='{q.subtopic}' pattern='{q.pattern}' content_type='{q.content_type}'")
+                print(f"[AutoTag Q{q.id}] auto_tag result: {tags}")
+                print(f"[AutoTag Q{q.id}] blueprint text (first 300 chars): {(q.question_blueprint or '')[:300]}")
+
+                # Use auto-tagged values (mapped to syllabus); fall back to raw q.* only
+                # if they already match a syllabus key (e.g. loaded from DB with correct names)
+                auto_subject = tags['subject'] or (q.subject if q.subject in syllabus_csv else '') or ''
+                auto_topic = ''
+                auto_subtopic = ''
+                if auto_subject and auto_subject in syllabus_csv:
+                    auto_topic = tags['topic'] or (q.topic if q.topic in syllabus_csv.get(auto_subject, {}) else '') or ''
+                    if auto_topic and auto_topic in syllabus_csv.get(auto_subject, {}):
+                        valid_subtopics = [s['subtopic'] for s in syllabus_csv[auto_subject][auto_topic]]
+                        auto_subtopic = tags['subtopic'] or (q.subtopic if q.subtopic in valid_subtopics else '') or ''
 
                 st.session_state[tag_state_key] = {
                     'subject': auto_subject,
@@ -1304,10 +1310,17 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
                         if blueprint_pattern != "N/A" and blueprint_pattern in pattern_options:
                             q.pattern = blueprint_pattern
 
-                    # Find current index
+                    # Find current index (exact match, then fuzzy fallback)
                     current_pattern_idx = 0
-                    if q.pattern and q.pattern in pattern_options:
-                        current_pattern_idx = pattern_options.index(q.pattern)
+                    if q.pattern:
+                        if q.pattern in pattern_options:
+                            current_pattern_idx = pattern_options.index(q.pattern)
+                        else:
+                            from difflib import get_close_matches
+                            matches = get_close_matches(q.pattern, pattern_options[1:], n=1, cutoff=0.5)
+                            if matches:
+                                q.pattern = matches[0]
+                                current_pattern_idx = pattern_options.index(matches[0])
 
                     pattern_tag = st.selectbox(
                         "Question Pattern (Required)",
@@ -1323,7 +1336,11 @@ def render_question_editor(q, index, total_questions, list_key, key_prefix):
                 with meta_col2:
                     content_type_options = ["Not Set", "Static", "Current Affairs"]
 
-                    # Auto-default based on whether web research was used
+                    # Auto-fill from blueprint first, then fallback to web research flag
+                    if not q.content_type and q.question_blueprint:
+                        bp_ct = parse_blueprint(q.question_blueprint).get("content_type", "N/A")
+                        if bp_ct != "N/A" and bp_ct in content_type_options:
+                            q.content_type = bp_ct
                     if not q.content_type:
                         q.content_type = "Current Affairs" if st.session_state.get('research_sources') else "Static"
 
@@ -1490,9 +1507,9 @@ def auto_tag_from_blueprint(blueprint_text: str) -> dict:
 def parse_blueprint(blueprint_text):
     """Extract metadata from blueprint text"""
     if not blueprint_text:
-        return {"topic": "N/A", "subtopic": "N/A", "pattern": "N/A", "cognitive": "N/A", "difficulty": "N/A"}
+        return {"topic": "N/A", "subtopic": "N/A", "pattern": "N/A", "cognitive": "N/A", "difficulty": "N/A", "content_type": "N/A"}
 
-    metadata = {"topic": "N/A", "subtopic": "N/A", "pattern": "N/A", "cognitive": "N/A", "difficulty": "N/A"}
+    metadata = {"topic": "N/A", "subtopic": "N/A", "pattern": "N/A", "cognitive": "N/A", "difficulty": "N/A", "content_type": "N/A"}
     lines = blueprint_text.split('\n')
 
     for line in lines:
@@ -1501,8 +1518,10 @@ def parse_blueprint(blueprint_text):
             metadata["topic"] = line.replace("Topic:", "").strip()
         elif line.startswith("Subtopic:"):
             metadata["subtopic"] = line.replace("Subtopic:", "").strip()
-        elif line.startswith("Format:") or line.startswith("Question Type:"):
+        elif line.startswith("Format:"):
             metadata["pattern"] = line.split(":", 1)[1].strip() if ":" in line else "N/A"
+        elif line.startswith("Question Type:"):
+            metadata["content_type"] = line.split(":", 1)[1].strip() if ":" in line else "N/A"
         elif line.startswith("Cognitive"):
             metadata["cognitive"] = line.split(":", 1)[1].strip() if ":" in line else "N/A"
         elif line.startswith("Difficulty:"):

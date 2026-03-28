@@ -1,228 +1,334 @@
 """
-One-time script to backfill explanations for existing questions in the DB.
-Run with: uv run python backfill_explanations.py
-Sample run: uv run python backfill_explanations.py --sample 5
-
-2184 questions, ~15 minutes with async batching.
+Backfill explanations for MCQs with missing explanations in App Prod.
+- GS questions: 5-section UPSC format
+- CSAT questions: Logic/Steps/Topic/Verification or Crux/Analysis/Topic
 """
-import os
-import sys
-import json
-import time
-import asyncio
-import argparse
+import sys, os, json, time, re
+sys.path.insert(0, os.path.dirname(__file__))
 
-# Fix Windows console encoding for Unicode characters (✓, ✗, etc.)
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-
-import psycopg2
-import psycopg2.extras
+import psycopg2, psycopg2.extras
 from google import genai
 from google.genai import types
 
-# Read secrets from .streamlit/secrets.toml
-import tomllib
-secrets_path = os.path.join(os.path.dirname(__file__), '.streamlit', 'secrets.toml')
-with open(secrets_path, 'rb') as f:
-    secrets = tomllib.load(f)
+# ── Config ──────────────────────────────────────────────────────────────────
+API_KEY = "AIzaSyBPrI4DuAYsSQInih_To1fhAXnyZ4qa3bc"
+MODEL   = "gemini-2.5-flash"
 
-DB_CONFIG = {
-    "host": secrets["host"],
-    "database": secrets["database"],
-    "user": secrets["user"],
-    "password": secrets["password"],
-    "port": secrets["port"]
+PROD_DB = dict(
+    host="prayas-db.cbii0i4yge4n.ap-south-1.rds.amazonaws.com",
+    database="prod-prayas-db",
+    user="prayas_db_user",
+    password="prayas_ai_dev_2025",
+    port="5432"
+)
+
+# ── Section name normaliser (reused from archivist) ──────────────────────────
+_SECTION_MAP = {
+    "statement analysis": "Statement Analysis",
+    "option analysis": "Statement Analysis",
+    "analysis of options": "Statement Analysis",
+    "chronological analysis": "Statement Analysis",
+    "core concept": "Core Concept",
+    "calculation steps:": "Core Concept",
+    "calculation steps": "Core Concept",
+    "logical elimination and educated guesstimate": "Logical Elimination and Educated Guesstimate",
+    "logical elimination": "Logical Elimination and Educated Guesstimate",
+    "key points to remember": "Key Points to Remember",
+    "key points": "Key Points to Remember",
+    "why this question?": "Why This Question?",
+    "why this question": "Why This Question?",
+    # CSAT sections
+    "logic": "Logic",
+    "steps": "Steps",
+    "topic": "Topic",
+    "verification": "Verification",
+    "crux": "Crux",
+    "analysis": "Analysis",
 }
 
-# Gemini client
-api_key = secrets["api_key"]
-os.environ['GEMINI_API_KEY'] = api_key
-async_client = genai.Client().aio
+def _markdown_to_sections(text: str):
+    if not text:
+        return None
+    lines = text.split('\n')
+    sections, current_section, current_lines = [], None, []
+    for line in lines:
+        stripped = line.strip()
+        if re.match(r'^#{1,3}\s+', stripped):
+            continue
+        if re.match(r'^(\*\*)?correct answer[:\s]', stripped, re.IGNORECASE):
+            continue
+        header_match = re.match(r'^\*\*(.*?)\*\*\s*$', stripped)
+        if header_match:
+            header_text = header_match.group(1).strip()
+            mapped = _SECTION_MAP.get(header_text.lower())
+            if mapped:
+                if current_section:
+                    content = '\n'.join(current_lines).strip()
+                    if content:
+                        sections.append({"content": content, "sectionName": current_section})
+                current_section = mapped
+                current_lines = []
+                continue
+        if current_section is not None:
+            current_lines.append(line)
+    if current_section:
+        content = '\n'.join(current_lines).strip()
+        if content:
+            sections.append({"content": content, "sectionName": current_section})
+    if not sections and text.strip():
+        return [{"content": text.strip(), "sectionName": "Core Concept"}]
+    return sections or None
 
-MODEL = "gemini-2.5-flash"
+# ── Prompts ──────────────────────────────────────────────────────────────────
+def _gs_explanation_prompt(question_text, options, correct_answer, taxonomy, web_context=""):
+    opts_str = "\n".join(f"({o['id'].upper()}) {o['text']}" for o in options)
+    web_block = f"\n\n### Reference Material (from web search)\n{web_context}" if web_context else ""
+    return f"""You are a UPSC exam expert. Generate a detailed explanation for the following MCQ.
 
-SYSTEM_INSTRUCTION = """You are an expert UPSC Prelims explanation writer. Generate concise, exam-oriented explanations in English with consistent markdown formatting.
+**Question:**
+{question_text}
 
-## DYNAMIC KNOWLEDGE PROTOCOL
-- **Temporal Awareness:** You are an expert analyst operating in real-time. Always evaluate if a concept is current, legacy, or newly updated.
-- **Verification First:** Before drafting an explanation, check for the latest government notifications, law amendments, or data releases.
-- **Adaptive Nomenclature:** If a scheme has been rebranded or replaced, prioritize the most recent official version.
+**Options:**
+{opts_str}
 
-## OUTPUT FORMAT
-Return ONLY the markdown explanation (English only, no JSON wrapper). Use these exact sections IN THIS ORDER with BLANK LINES between sections:
+**Correct Answer:** {correct_answer.upper()}
 
-1. **Correct Answer: [Letter]** (at the very top, bold)
-2. **Statement Analysis** (bold text, normal size)
-3. **Core Concept** (bold text, normal size, 60-80 words)
-4. **Logical Elimination and Educated Guesstimate** (only when applicable)
-5. **Key Points to Remember** (bold text, normal size)
-6. **Why This Question?** (bold text, normal size)
+**Topic:** {', '.join(t for t in taxonomy if t)}
+{web_block}
 
-## MARKDOWN FORMATTING RULES
+Generate explanation with these EXACT sections (use **bold** for section names, no # headings):
 
-### Use These:
-- **bold** for section headers (NO markdown heading syntax — no #, ##, or ###)
-- **bold** for exam-relevant keywords in Core Concept (technical terms, acts, articles, years, personalities)
-- ✓ for correct statements | ✗ for incorrect statements
-- NUMBERED statements (1, 2, 3) as per official UPSC format (MANDATORY)
-- `-` (dash with space) for main bullet points
-- `  -` (two spaces + dash) for sub-bullets under main points
-- Blank line before and after Key Points section for readability
+**Correct Answer: {correct_answer.upper()}**
 
-### Don't Use:
-- NO markdown heading syntax (#, ##, ###) — use bold text instead
-- NO code blocks with ```
-- NO alphabetical labeling (a, b, c) — use numbers (1, 2, 3) for statements
-- NO generic bolding ("important", "significant") — only bold exam-relevant terms
+**Statement Analysis**
+Analyse each statement/option — mark ✓ Correct or ✗ Incorrect with a brief reason.
 
-## CONTENT GUIDELINES
+**Core Concept**
+3–4 sentences explaining the core concept tested. Bold key terms.
 
-### Statement Analysis:
-- Number each statement as 1, 2, 3 (official UPSC format)
-- Format: `1. **Statement 1:** ✓ Correct — [10-15 word reason]`
-- Be direct and assertive
+**Logical Elimination and Educated Guesstimate**
+2–3 sentences on how to eliminate wrong options logically.
 
-### Core Concept (60-80 words):
-- Analytical depth with mechanisms, relationships, and underlying principles
-- Bold ONLY exam-relevant terms: technical concepts, constitutional refs, acts, years, key personalities
-- Use cause-effect language: "occurs due to", "results from", "arises because"
-- Give equal weightage to ALL concepts in the question
+**Key Points to Remember**
+- **Point 1:** [key fact]
+- **Point 2:** [related insight]
+- **Point 3:** [current relevance]
 
-### Logical Elimination (only when applicable):
-- Step-by-step elimination logic, 2-3 sentences max
-- Show how to narrow down using partial knowledge or exam strategy
-
-### Key Points to Remember:
-- 3-5 main bullets with 1-3 sub-bullets each
-- Bold the concept name/heading on each main bullet
-- Equal importance to all concepts in the question
-
-### Why This Question? (2-3 sentences):
-- Current affairs relevance OR syllabus linkage
-- If recurring: "This [topic] is a recurring theme in UPSC Prelims/Mains examinations."
-- Be specific with names, dates, references
+**Why This Question?**
+2–3 sentences on UPSC relevance, syllabus linkage, or current affairs connection.
 """
 
+def _csat_explanation_prompt(question_text, options, correct_answer, taxonomy):
+    opts_str = "\n".join(f"({o['id'].upper()}) {o['text']}" for o in options)
+    topic = ', '.join(t for t in taxonomy if t)
+    # Determine type
+    reasoning_topics = {'reasoning', 'math', 'algebra', 'arithmetic', 'series', 'puzzles', 'seating', 'coding', 'direction', 'blood relations', 'data interpretation', 'geometry', 'number system'}
+    is_reasoning = any(any(rt in t.lower() for rt in reasoning_topics) for t in taxonomy if t)
 
-async def generate_explanation(question_text: str, options: dict, answer: str) -> str:
-    """Generate a detailed explanation for an existing question."""
-    options_text = "\n".join(f"({k.upper()}) {v}" for k, v in sorted(options.items()))
+    if is_reasoning:
+        return f"""You are a CSAT exam expert. Generate a detailed explanation for the following MCQ.
 
-    prompt = (
-        f"Generate a detailed UPSC Prelims explanation for this question.\n\n"
-        f"**Question:**\n{question_text}\n\n"
-        f"**Options:**\n{options_text}\n\n"
-        f"**Correct Answer: {answer}**\n\n"
-        f"Follow the system instructions exactly. Output markdown only (English only, no JSON)."
-    )
+**Question:**
+{question_text}
 
-    resp = await async_client.models.generate_content(
-        model=MODEL,
-        contents=[prompt],
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            temperature=0.1,
-            max_output_tokens=2000,
-        ),
-    )
+**Options:**
+{opts_str}
 
-    return resp.text.strip() if resp.text else ""
+**Correct Answer:** {correct_answer.upper()}
+**Topic:** {topic}
 
+Generate explanation with these EXACT sections (use **bold** for section names):
 
-async def process_batch(batch, conn, cur, batch_num, total_batches, dry_run=False):
-    """Process a batch of questions concurrently."""
-    tasks = []
-    for row in batch:
-        options = row['options_english']
-        if isinstance(options, str):
-            options = json.loads(options)
-        tasks.append(generate_explanation(row['question_english'], options, row['answer']))
+**Correct Answer: {correct_answer.upper()}**
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+**Logic**
+Explain the core logical/mathematical reasoning or pattern used to solve this.
 
-    success = 0
-    failed = 0
-    for row, result in zip(batch, results):
-        if isinstance(result, Exception):
-            print(f"  ERROR for {row['id']}: {result}")
-            failed += 1
-        elif result:
-            if dry_run:
-                print(f"\n{'='*80}")
-                print(f"Q: {row['question_english'][:100]}...")
-                print(f"Answer: {row['answer']}")
-                print(f"{'='*80}")
-                print(result)
-                print(f"{'='*80}\n")
-            else:
-                cur.execute(
-                    "UPDATE upsc_prelims_ai_generated_que SET explanation = %s WHERE id = %s",
-                    (result, row['id'])
-                )
-            success += 1
-        else:
-            failed += 1
+**Steps**
+Step-by-step working:
+1. [Step 1]
+2. [Step 2]
+3. [Step 3]
+(add more steps as needed)
 
-    if not dry_run:
-        conn.commit()
-    print(f"  Batch {batch_num}/{total_batches}: {success} OK, {failed} failed")
-    return success, failed
+**Topic**
+{topic}
 
+**Verification**
+Verify the answer by checking/substituting back. Explain why other options are wrong.
+"""
+    else:
+        # English/comprehension
+        return f"""You are a CSAT exam expert. Generate a detailed explanation for the following MCQ.
 
-async def main():
-    parser = argparse.ArgumentParser(description="Backfill explanations for UPSC questions")
-    parser.add_argument('--sample', type=int, default=0,
-                        help="Run on N sample rows (dry run, no DB writes)")
-    args = parser.parse_args()
+**Question:**
+{question_text}
 
-    conn = psycopg2.connect(**DB_CONFIG)
-    cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+**Options:**
+{opts_str}
 
-    # Get questions without explanations
-    limit_clause = f"LIMIT {args.sample}" if args.sample > 0 else ""
-    cur.execute(f"""
-        SELECT id, question_english, options_english, answer
-        FROM upsc_prelims_ai_generated_que
-        WHERE explanation IS NULL
-        ORDER BY question_number
-        {limit_clause}
+**Correct Answer:** {correct_answer.upper()}
+**Topic:** {topic}
+
+Generate explanation with these EXACT sections (use **bold** for section names):
+
+**Correct Answer: {correct_answer.upper()}**
+
+**Crux**
+State the central idea/argument of the passage or the key logical point being tested.
+
+**Analysis**
+Analyse each option:
+1. Option A — [correct/incorrect + reason]
+2. Option B — [correct/incorrect + reason]
+3. Option C — [correct/incorrect + reason]
+4. Option D — [correct/incorrect + reason]
+
+**Topic**
+{topic}
+"""
+
+# ── Web search ────────────────────────────────────────────────────────────────
+def web_search_context(client, question_text, taxonomy):
+    topic = ', '.join(t for t in taxonomy if t)
+    try:
+        grounding_tool = types.Tool(google_search=types.GoogleSearch())
+        prompt = (
+            f"Research this UPSC topic for explaining an MCQ:\nTopic: {topic}\n"
+            f"Question hint: {question_text[:300]}\n\n"
+            f"Return only key facts, dates, data points, policy details as bullet points."
+        )
+        resp = client.models.generate_content(
+            model=MODEL,
+            contents=[prompt],
+            config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=2000, tools=[grounding_tool])
+        )
+        return resp.text or ""
+    except Exception as e:
+        print(f"  [WebSearch] failed: {e}")
+        return ""
+
+def needs_web_search(client, question_text, taxonomy):
+    topic = ', '.join(t for t in taxonomy if t)
+    try:
+        prompt = (
+            f"Does explaining this UPSC MCQ require recent factual context (post May 2025)?\n"
+            f"Topic: {topic}\nQuestion: {question_text[:200]}\nReply ONLY: YES or NO"
+        )
+        resp = client.models.generate_content(
+            model=MODEL, contents=[prompt],
+            config=types.GenerateContentConfig(temperature=0, max_output_tokens=5)
+        )
+        return (resp.text or "").strip().upper().startswith("YES")
+    except:
+        return False
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+def main():
+    client = genai.Client(api_key=API_KEY)
+    prod = psycopg2.connect(**PROD_DB)
+    cur = prod.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
+    # Fetch all MCQs with missing explanations + their metadata
+    cur.execute("""
+        SELECT
+            m.id as mcq_id,
+            m."questionText",
+            m.options,
+            m."correctOptionIds",
+            m.question_pattern,
+            li.paper,
+            array_agg(t.name ORDER BY t.level) FILTER (WHERE t.name IS NOT NULL) as taxonomy
+        FROM mcqs m
+        JOIN learning_items li ON li.id = m."learningItemId"
+        LEFT JOIN learning_item_taxonomies lit ON lit."learningItemId" = li.id
+        LEFT JOIN taxonomies t ON t.id = lit."taxonomyId"
+        WHERE m.explanation IS NULL
+        GROUP BY m.id, m."questionText", m.options, m."correctOptionIds", m.question_pattern, li.paper
     """)
     rows = cur.fetchall()
+    print(f"MCQs to backfill: {len(rows)}")
 
-    total = len(rows)
-    dry_run = args.sample > 0
+    success, failed, skipped = 0, 0, 0
 
-    if dry_run:
-        print(f"SAMPLE RUN: Processing {total} questions (no DB writes)")
-    else:
-        print(f"Found {total} questions without explanations.")
+    for i, row in enumerate(rows):
+        mcq_id = row['mcq_id']
+        question_text = row['questionText'] or ''
+        options = row['options'] or []
+        correct_ids = row['correctOptionIds'] or []
+        paper = row['paper'] or 'gs1'
+        taxonomy = row['taxonomy'] or []
 
-    if total == 0:
-        print("Nothing to do.")
-        return
+        if not question_text or not options or not correct_ids:
+            print(f"[{i+1}/{len(rows)}] SKIP {mcq_id} — missing question/options/answer")
+            skipped += 1
+            continue
 
-    BATCH_SIZE = 15
-    total_success = 0
-    total_failed = 0
-    total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
+        correct_answer = correct_ids[0] if correct_ids else 'A'
+        print(f"\n[{i+1}/{len(rows)}] {mcq_id} | paper={paper} | topic={taxonomy}")
 
-    start = time.perf_counter()
+        # Build prompt
+        if paper == 'csat':
+            prompt = _csat_explanation_prompt(question_text, options, correct_answer, taxonomy)
+            web_context = ""
+        else:
+            # GS — check if web search needed
+            do_search = needs_web_search(client, question_text, taxonomy)
+            web_context = ""
+            if do_search:
+                print(f"  [WebSearch] fetching context...")
+                web_context = web_search_context(client, question_text, taxonomy)
+                print(f"  [WebSearch] got {len(web_context)} chars")
+            prompt = _gs_explanation_prompt(question_text, options, correct_answer, taxonomy, web_context)
 
-    for i in range(0, total, BATCH_SIZE):
-        batch = rows[i:i + BATCH_SIZE]
-        batch_num = (i // BATCH_SIZE) + 1
-        s, f = await process_batch(batch, conn, cur, batch_num, total_batches, dry_run=dry_run)
-        total_success += s
-        total_failed += f
-        if not dry_run:
-            await asyncio.sleep(0.5)
+        # Generate with retries
+        generated = None
+        for attempt in range(3):
+            try:
+                resp = client.models.generate_content(
+                    model=MODEL,
+                    contents=[prompt],
+                    config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=4000)
+                )
+                raw = resp.text or ""
+                sections = _markdown_to_sections(raw)
+                if sections and len(sections) >= 2:
+                    generated = sections
+                    break
+                else:
+                    print(f"  Attempt {attempt+1}: only {len(sections) if sections else 0} sections, retrying...")
+                    time.sleep(2)
+            except Exception as e:
+                print(f"  Attempt {attempt+1} error: {e}")
+                time.sleep(3)
 
-    elapsed = time.perf_counter() - start
-    print(f"\nDone in {elapsed:.1f}s! Success: {total_success}, Failed: {total_failed}, Total: {total}")
+        if not generated:
+            print(f"  FAILED after 3 attempts")
+            failed += 1
+            continue
+
+        # Update DB
+        try:
+            cur.execute(
+                'UPDATE mcqs SET explanation = %s::jsonb WHERE id = %s',
+                (json.dumps(generated), mcq_id)
+            )
+            prod.commit()
+            print(f"  ✅ Saved {len(generated)} sections: {[s['sectionName'] for s in generated]}")
+            success += 1
+        except Exception as e:
+            prod.rollback()
+            print(f"  DB error: {e}")
+            failed += 1
+
+        time.sleep(0.5)  # rate limit
+
     cur.close()
-    conn.close()
+    prod.close()
 
+    print(f"\n{'='*60}")
+    print(f"DONE. Success: {success} | Failed: {failed} | Skipped: {skipped}")
+    print(f"Total: {success + failed + skipped}/{len(rows)}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

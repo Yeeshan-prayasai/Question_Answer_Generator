@@ -182,6 +182,7 @@ class QuestionManager:
             topic = plan_text.split('Topic:')[-1].strip().split('\n')[0] if 'Topic:' in plan_text else None
             subtopic = plan_text.split('Subtopic:')[-1].strip().split('\n')[0] if 'Subtopic:' in plan_text else None
             pattern = plan_text.split('Format:')[-1].strip().split('\n')[0] if 'Format:' in plan_text else None
+            content_type = plan_text.split('Question Type:')[-1].strip().split('\n')[0] if 'Question Type:' in plan_text else None
 
             print(f'[Q{q_num}] Starting generation...')
 
@@ -254,7 +255,7 @@ class QuestionManager:
                     test_type=None,
                     prone_to_silly_mistakes=None,
                     pattern=pattern,
-                    content_type=None,  # Will be set during review
+                    content_type=content_type,
                     is_selected=False # Default to False
                 )
             return out

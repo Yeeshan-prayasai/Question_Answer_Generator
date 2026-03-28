@@ -335,6 +335,9 @@ class ArchivistAgent:
                     q = group["q"]
                     mcq_uuid = group["mcq_uuid"]
                     tags = [tt for tt in group["test_types"] if tt]
+                    purpose = 'daily-challenges' if any(
+                        tt.lower() == 'daily challenge' for tt in tags
+                    ) else None
 
                     opts = [{"id": chr(97 + i), "text": opt} for i, opt in enumerate(q.options_english)]
                     correct = [q.answer.upper()]
@@ -355,9 +358,10 @@ class ArchivistAgent:
                             UPDATE learning_items SET
                                 tags = %s,
                                 "difficultyLevel" = %s,
+                                purpose = %s,
                                 "updatedAt" = NOW()
                             WHERE id = %s
-                        """, (tags, difficulty, existing_li_id))
+                        """, (tags, difficulty, purpose, existing_li_id))
                         app_cur.execute("""
                             UPDATE mcqs SET
                                 "questionText" = %s,
@@ -401,14 +405,14 @@ class ArchivistAgent:
                                 id, "createdAt", "updatedAt", type, "difficultyLevel",
                                 "estimatedTimeSeconds", "isPyq", paper, status,
                                 "isVerified", "canServeIndependently", tags,
-                                "createdBy", "max_marks"
+                                "createdBy", "max_marks", purpose
                             ) VALUES (
                                 %s, NOW(), NOW(), 'mcq', %s,
                                 72, FALSE, 'gs1', 'published',
                                 TRUE, TRUE, %s,
-                                %s, 2
+                                %s, 2, %s
                             )
-                        """, (li_uuid, difficulty, tags, SYSTEM_USER_ID))
+                        """, (li_uuid, difficulty, tags, SYSTEM_USER_ID, purpose))
                         app_cur.execute("""
                             INSERT INTO mcqs (
                                 id, "createdAt", "updatedAt",
