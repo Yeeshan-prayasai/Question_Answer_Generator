@@ -82,11 +82,12 @@ class GeneratorAgent:
 
     def _normalize_option_order(self, question_obj, blueprint):
         """
-        Enforces canonical ordering ONLY for specific option patterns:
+        Enforces canonical ordering for specific option patterns:
         - 2-statement options (1 only / 2 only / Both / Neither)
         - How-Many options (Only one / Only two / Only three / All N)
         - 3-statement: option containing all three (1, 2 and 3) goes last
-        All other question types (4-statement, A/R, match-the-pair, etc.) are left untouched.
+        - 2-stmt Assertion-Reason (Both+explanation / Both+not-explanation / I-correct / II-correct)
+        - 3-stmt Assertion-Reason (Both-both-explain / Both-one-explains / Only-one-explains / Neither)
         Updates question_obj.answer to match the new position.
         """
         options = list(question_obj.options)
@@ -96,44 +97,90 @@ class GeneratorAgent:
 
         opts_lower = [o.lower().strip() for o in options]
 
-        # ── How Many: options must ALL be "only one/two/three" or "all N" ──
-        has_only_one   = any('only one'   in o or o.startswith('only one')   for o in opts_lower)
-        has_only_two   = any('only two'   in o or o.startswith('only two')   for o in opts_lower)
-        has_all        = any(o.startswith('all ') for o in opts_lower)
+        # ── 3-stmt Assertion-Reason: detect first (most specific) ──
+        is_3stmt_ar = (
+            any('statement iii' in o or 'statement-iii' in o for o in opts_lower)
+            or (any('neither statement' in o for o in opts_lower)
+                and any('iii' in o for o in opts_lower))
+        )
+        is_2stmt_ar = (
+            not is_3stmt_ar
+            and sum(1 for o in opts_lower if 'both' in o) >= 2
+            and any('incorrect' in o for o in opts_lower)
+            and (any('explanation' in o for o in opts_lower)
+                 or any('explain' in o for o in opts_lower))
+        )
 
-        if has_only_one and has_only_two and has_all:
-            def how_many_rank(opt):
+        if is_3stmt_ar:
+            def three_ar_rank(opt):
                 o = opt.lower()
-                if o.startswith('all '): return 4
-                if 'three' in o: return 3
-                if 'two' in o: return 2
-                if 'one' in o: return 1
+                if 'neither' in o:
+                    return 4
+                if 'both' in o:
+                    if 'only one of them' in o:
+                        return 2
+                    return 1
+                if 'only one' in o:
+                    return 3
                 return 5
-            new_options = sorted(options, key=how_many_rank)
+            new_options = sorted(options, key=three_ar_rank)
 
-        # ── 2-statement: options must be 1 only / 2 only / Both / Neither ──
-        elif (any('neither' in o for o in opts_lower) and
-              any('both' in o for o in opts_lower) and
-              any(re.search(r'\b(1|i)\b.*only|only.*\b(1|i)\b', o) for o in opts_lower) and
-              any(re.search(r'\b(2|ii)\b.*only|only.*\b(2|ii)\b', o) for o in opts_lower)):
-            def two_stmt_rank(opt):
+        elif is_2stmt_ar:
+            def two_ar_rank(opt):
                 o = opt.lower()
-                if 'neither' in o: return 4
-                if 'both' in o: return 3
-                if re.search(r'\b(2|ii)\b', o): return 2
-                return 1
-            new_options = sorted(options, key=two_stmt_rank)
+                if 'both' in o:
+                    if ('not the correct explanation' in o
+                        or 'not a correct explanation' in o
+                        or 'is not the explanation' in o
+                        or 'but' in o):
+                        return 2
+                    return 1
+                if re.search(r'\bi\s+is\s+correct.*\bii\s+is\s+incorrect', o):
+                    return 3
+                if re.search(r'\bi\s+is\s+incorrect.*\bii\s+is\s+correct', o):
+                    return 4
+                return 5
+            new_options = sorted(options, key=two_ar_rank)
 
-        # ── 3-statement: only move "1, 2 and 3" option to last ──
         else:
-            def is_all_three(opt):
-                o = opt.lower()
-                return ('1' in o and '2' in o and '3' in o) or 'all three' in o
-            all_three = [o for o in options if is_all_three(o)]
-            others    = [o for o in options if not is_all_three(o)]
-            # Only apply if exactly one "all three" option exists and others are pairwise combos
-            if len(all_three) == 1 and len(others) == 3:
-                new_options = others + all_three
+            # ── How Many: options must ALL be "only one/two/three" or "all N" ──
+            has_only_one   = any('only one'   in o or o.startswith('only one')   for o in opts_lower)
+            has_only_two   = any('only two'   in o or o.startswith('only two')   for o in opts_lower)
+            has_all        = any(o.startswith('all ') for o in opts_lower)
+
+            if has_only_one and has_only_two and has_all:
+                def how_many_rank(opt):
+                    o = opt.lower()
+                    if o.startswith('all '): return 4
+                    if 'three' in o: return 3
+                    if 'two' in o: return 2
+                    if 'one' in o: return 1
+                    return 5
+                new_options = sorted(options, key=how_many_rank)
+
+            # ── 2-statement: options must be 1 only / 2 only / Both / Neither ──
+            elif (any('neither' in o for o in opts_lower) and
+                  any('both' in o for o in opts_lower) and
+                  any(re.search(r'\b(1|i)\b.*only|only.*\b(1|i)\b', o) for o in opts_lower) and
+                  any(re.search(r'\b(2|ii)\b.*only|only.*\b(2|ii)\b', o) for o in opts_lower)):
+                def two_stmt_rank(opt):
+                    o = opt.lower()
+                    if 'neither' in o: return 4
+                    if 'both' in o: return 3
+                    if re.search(r'\b(2|ii)\b', o): return 2
+                    return 1
+                new_options = sorted(options, key=two_stmt_rank)
+
+            # ── 3-statement: only move "1, 2 and 3" option to last ──
+            else:
+                def is_all_three(opt):
+                    o = opt.lower()
+                    return ('1' in o and '2' in o and '3' in o) or 'all three' in o
+                all_three = [o for o in options if is_all_three(o)]
+                others    = [o for o in options if not is_all_three(o)]
+                # Only apply if exactly one "all three" option exists and others are pairwise combos
+                if len(all_three) == 1 and len(others) == 3:
+                    new_options = others + all_three
 
         if new_options and new_options != options:
             new_idx = new_options.index(correct_text)

@@ -88,6 +88,7 @@ Answer: C
             * **DEEP Conceptual Understanding.**
             * **High-Standard Factual Precision** (equivalent to UPSC Preliminary standards).
         4.  **Statements:** Statements must be concise and small (single phrase or at most small line is acceptable), yet deliberately **TOUGH and CLOSELY RELATED** to make subtle distinctions and elimination challenging.
+        5.  **CRITICAL — ANSWER DIVERSITY (STRICT):** DO NOT default to making all 3 statements correct. The "all three correct" option (i.e. answer key "1, 2 and 3") is OVERUSED and MUST be the correct answer in NO MORE THAN 1 OUT OF 5 questions of this pattern. In the majority of cases, the correct answer MUST be a 2-statement combination ("1 and 2 only" / "2 and 3 only" / "1 and 3 only") or a single-statement option. Deliberately mark exactly ONE or TWO statements as incorrect in most questions to force genuine elimination by the candidate. Defaulting to "all three correct" is a CRITICAL FAILURE.
             """,
             "example": """
 Question:

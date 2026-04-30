@@ -55,19 +55,19 @@ syllabus = {
         "External Sector",
         "Budget & Finance",
         "Economic Sectors",
-        "Dev. Indicators",
+        "Development Indicators",
         "Inclusive Growth",
         "Macroeconomics"
     ],
     "Environment": [
         "Ecology",
-        "Environmental Law",
+        "Environmental Laws",
         "Biodiversity",
-        "Int. Conventions",
+        "International Conventions",
         "Protected Areas",
         "Climate Change",
         "Pollution",
-        "Env. Management"
+        "Environment Management"
     ],
     "Science & Tech": [
         "Space Science",
@@ -76,7 +76,7 @@ syllabus = {
         "ICT",
         "Energy Tech",
         "Basic Science",
-        "Disaster Mgmt."
+        "Disaster Management"
     ],
     "Current Affairs": [
         "Economy",
